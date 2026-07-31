@@ -1,0 +1,8 @@
+build/
+build_msys2/
+.qtcreator/
+*.o
+*.obj
+*.exe
+*.pro.user
+*.autosave
