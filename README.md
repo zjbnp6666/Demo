@@ -106,6 +106,34 @@ Seek 后第一帧跳过"太晚"检查（`m_justSeeked` 标志），因为音频�
 
 变速改变的是音频重采样器的输出采样率（`out_sample_rate = 原始采样率 / 倍速`），不是视频解码速度。所以变速必须设 `m_swrReady = false` 让下次音频解码时重建 `SwrContext`。视频的"倍速"只是改了主线程定时器间隔（`16ms / 倍速`），让渲染更快或更慢。
 
-### FrameQueue 的双向阻塞
+### FrameQueue 为什么容量是 5
 
-队列容量 5。push 满了生产者睡，pop 空了消费者睡，`clear()` 唤醒双方。EOF 时 `setDone()` 唤醒 pop 并返回空帧。seek 时两边都可能调用 `clear()`——主线程为了唤醒阻塞的 pop，解码线程为了清空旧帧。mutex 保护下这不会竞态。
+5 帧 ≈ 160ms 缓冲（5 × 33ms/帧）。太少（1-2）：生产者和消费者几乎串行，稍微抖动就卡。太多（20-30）：一帧 1080p RGB 画面 ≈ 6MB，30 帧就是 180MB 内存，且解码跑得比渲染快太多导致几百毫秒的延迟。5 是够扛住瞬时抖动又不浪费内存的经验值。
+
+### `m_done` / `setDone()` — EOF 唤醒机制
+
+`pop()` 正常逻辑：队列空 → 阻塞等新帧。但文件读完（EOF）后永远不会有新帧了，`pop()` 会永远卡住。
+
+`setDone()` 就是 EOF 时叫醒 `pop()`：设 `m_done = true` → 唤醒 → `pop()` 看到 `m_done` 为真且队列空 → 返回空 FrameData。`clear()` 里重置 `m_done = false`，因为 seek 或切视频后又有新数据了。
+
+### 为什么 seek 后要先解一帧再开 timer
+
+`av_seek_frame()` 只移动文件读指针，`avcodec_flush_buffers()` 又清了内部缓冲——**没有任何帧被解码**。如果不先解一帧，seek 完队列是空的，`strat()` 里的 `pop()` 得等 timer 触发 `decodeBatch` 才有东西，用户看到画面更新最多晚 16ms。
+
+先 `decodeOneVideoFrame()` 解一帧 push 进去，`strat()` 的 `pop()` 立刻返回，画面秒更新。
+
+### Qt 跨线程信号与事件队列
+
+解码线程内部有一个事件队列（"待办清单"），所有要在线程里执行的东西都在这排队：
+
+| 来源 | 例子 |
+|---|---|
+| 跨线程信号 | `emit requestSeek()` → Qt 包装成 `QMetaCallEvent` 塞进队列 |
+| QTimer 超时 | `m_timer` 每 16ms 到期，塞一个 timer 事件进队列 |
+| `QMetaObject::invokeMethod` | 也是塞一个事件进队列 |
+
+**所有事件排同一条队，先到先服务，没有优先级。**
+
+同线程信号不走队列（默认 `DirectConnection` = 直接函数调用），跨线程强制 `QueuedConnection` = 塞便签进对方待办清单。
+
+Bug 2 的本质就是 `decodeBatch()` 里的阻塞 `push()` 占着线程不归还，后面的 `requestSeek` 永远排不上。`pendingSeek` 原子标志就是让 `decodeBatch` 检测到 seek 来时立刻撤退，把线程归还给事件循环，让 `requestSeek` 能执行。
