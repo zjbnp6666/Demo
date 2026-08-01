@@ -15,6 +15,7 @@ class FrameQueue
 {
 public:
     void push(const FrameData &frame);
+    void push(FrameData &&frame);       // 移动版本，避免拷贝 QImage
     FrameData pop();
     void clear();
     bool isEmpty();

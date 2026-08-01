@@ -10,6 +10,17 @@ void FrameQueue::push(const FrameData &frame)
     notEmpty.wakeOne();
 }
 
+void FrameQueue::push(FrameData &&frame)
+{
+    QMutexLocker locker(&mutex);
+    while(queue.size()>=MAX_SIZE)
+    {
+        notFull.wait(&mutex);
+    }
+    queue.append(std::move(frame));
+    notEmpty.wakeOne();
+}
+
 FrameData FrameQueue::pop()
 {
     QMutexLocker locker(&mutex);

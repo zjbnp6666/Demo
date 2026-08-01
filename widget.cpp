@@ -240,16 +240,15 @@ Widget::~Widget()
 // ==================== 每帧回调 ====================
 void Widget::onPlaybackTick()
 {
-    if (m_isSeeking) return;
-    if (m_paused)    return;
+    if (m_isSeeking) return;//是否可播放状态 优先级最高
+    if (m_paused)    return;//是否处于暂停状态
 
     // 更新进度条（音频时钟驱动）
     m_seekSlider->setValue((int)(m_worker->audioClock / 1000000));
 
     // 检查缓存帧是否到显示时间
     if (!m_pendingFrame.isNull() && m_pendingPts <= m_worker->audioClock + 30000) {
-        m_currentImage = m_pendingFrame;
-        m_pendingFrame = QImage();
+        m_currentImage = std::move(m_pendingFrame);
         update();
     }
 
@@ -262,12 +261,12 @@ void Widget::onPlaybackTick()
     }
 
     if (data.pts_us > m_worker->audioClock + 30000) {
-        m_pendingFrame = data.image;        // 太早，缓存
+        m_pendingFrame = std::move(data.image);        // 太早，缓存
         m_pendingPts   = data.pts_us;
         return;
     }
 
-    m_currentImage = data.image;
+    m_currentImage = std::move(data.image);
     m_pendingFrame = QImage();
     update();
 }
@@ -316,15 +315,15 @@ void Widget::keyPressEvent(QKeyEvent *event)
         m_playbackSpeed = 2.0;
     }
 
-    // 左箭头按住 → 临时 1.5x
-    if (event->key() == Qt::Key_Left && !event->isAutoRepeat()) {
+    // 右箭头按住 → 临时 1.5x
+    if (event->key() == Qt::Key_Right && !event->isAutoRepeat()) {
         m_playbackSpeed = 1.5;
     }
 
     // 统一处理倍速变更
     if (event->key() == Qt::Key_1 || event->key() == Qt::Key_2
         || event->key() == Qt::Key_3
-        || (event->key() == Qt::Key_Left && !event->isAutoRepeat())) {
+        || (event->key() == Qt::Key_Right && !event->isAutoRepeat())) {
         m_speedLabel->setText(QString("%1x").arg(m_playbackSpeed, 0, 'f', 1));
         emit speedChanged(m_playbackSpeed);
         m_audioNeedsInit = false;
@@ -334,8 +333,8 @@ void Widget::keyPressEvent(QKeyEvent *event)
 
 void Widget::keyReleaseEvent(QKeyEvent *event)
 {
-    // 左箭头松开 → 恢复 1.0x
-    if (event->key() == Qt::Key_Left && !event->isAutoRepeat()) {
+    // 右箭头松开 → 恢复 1.0x
+    if (event->key() == Qt::Key_Right && !event->isAutoRepeat()) {
         m_playbackSpeed = 1.0;
         m_speedLabel->setText("1.0x");
         emit speedChanged(m_playbackSpeed);

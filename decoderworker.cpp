@@ -162,7 +162,7 @@ void DecoderWorker::decodeBatch()
                 FrameData data;
                 data.pts_us = m_frame->pts * av_q2d(m_videoTimeBase) * 1000000.0;
                 data.image  = decoded.copy();
-                m_videoQueue->push(data);
+                m_videoQueue->push(std::move(data));
                 free(rgbBuf);
                 videoFrames++;
                 break;
@@ -250,7 +250,7 @@ void DecoderWorker::decodeOneVideoFrame()
                 FrameData data;
                 data.pts_us = m_frame->pts * av_q2d(m_videoTimeBase) * 1000000.0;
                 data.image  = decoded.copy();
-                m_videoQueue->push(data);
+                m_videoQueue->push(std::move(data));
                 free(rgbBuf);
 
                 audioClock = data.pts_us;
