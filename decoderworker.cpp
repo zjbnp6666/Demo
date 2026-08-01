@@ -1,260 +1,265 @@
 #include "decoderworker.h"
-#include <qdebug.h>
+
 DecoderWorker::DecoderWorker(FrameQueue *vq, QObject *parent)
-    :QObject(parent)
+    : QObject(parent), m_videoQueue(vq)
 {
-    videoQueue=vq;
-    pkt=av_packet_alloc();
-    frame=av_frame_alloc();
-    m_timer=new QTimer(this);
-    connect(m_timer,&QTimer::timeout,this,&DecoderWorker::decodeBatch);
+    m_packet = av_packet_alloc();
+    m_frame  = av_frame_alloc();
+    m_timer  = new QTimer(this);
+    connect(m_timer, &QTimer::timeout, this, &DecoderWorker::decodeBatch);
 }
 
 DecoderWorker::~DecoderWorker()
 {
     m_timer->stop();
-    av_packet_free(&pkt);
-    av_frame_free(&frame);
-    avcodec_free_context(&avcodec);
-    avcodec_free_context(&aucodec);
-    swr_free(&swr);
-    sws_freeContext(sws);
-    avformat_free_context(Ctx);
+    av_packet_free(&m_packet);
+    av_frame_free(&m_frame);
+    avcodec_free_context(&m_videoCodecCtx);
+    avcodec_free_context(&m_audioCodecCtx);
+    swr_free(&m_swr);
+    sws_freeContext(m_sws);
+    avformat_free_context(m_formatCtx);
 }
 
+// ==================== 打开文件 ====================
 void DecoderWorker::open(const QString &filepath)
 {
-    if(Ctx){
-        avformat_close_input(&Ctx);
-    avcodec_free_context(&avcodec);      // 清视频解码器残留
-    avcodec_free_context(&aucodec);      // 清音频解码器残留
-    videoQueue->clear();
-    swr_free(&swr);
-    sws_freeContext(sws);
-    sws=nullptr;
-    totalWritten=0;
-    audioClock=0;
-    AVSTREAM = -1;
-    AUSTREAM = -1;
+    // 重开时先清理旧的
+    if (m_formatCtx) {
+        avformat_close_input(&m_formatCtx);
+        avcodec_free_context(&m_videoCodecCtx);
+        avcodec_free_context(&m_audioCodecCtx);
+        m_audioCodecCtx = nullptr;
+        m_videoCodecCtx = nullptr;
+
+        m_videoQueue->clear();
+        swr_free(&m_swr);
+        sws_freeContext(m_sws);
+        m_sws = nullptr;
+        m_audioSamplesWritten = 0;
+        audioClock = 0;
+        m_videoStreamIndex = -1;
+        m_audioStreamIndex = -1;
+        m_speed = 1.0;
     }
-    QByteArray mmp=filepath.toLocal8Bit();
-    const char *mp4=mmp.constData();
-    // ---- 打开文件 ----
-    if (avformat_open_input(&Ctx,mp4, nullptr, nullptr)) {
-        // avformat_open_input: 打开文件，读取头信息，填充 AVFormatContext
+
+    QByteArray rawPath = filepath.toLocal8Bit();
+    const char *cPath  = rawPath.constData();
+
+    if (avformat_open_input(&m_formatCtx, cPath, nullptr, nullptr)) {
         emit openFailed("文件打开失败");
         return;
     }
-    avformat_find_stream_info(Ctx, nullptr);
-    // 上面这句会扫描几秒，探测流的编码参数(分辨率/采样率等)，之后才能用
+    avformat_find_stream_info(m_formatCtx, nullptr);
 
-    // ---- 遍历音视频流，初始化解码器 ----
-    // Ctx->duration: 容器总时长，单位 AV_TIME_BASE=1/1000000秒
-    totaSUM=(double)Ctx->duration/AV_TIME_BASE;
-    emit durationReady(totaSUM);
-    double frameDelay;
-    for (int i = 0; i < Ctx->nb_streams; i++) {
-        AVStream *stream = Ctx->streams[i];
-        AVCodecParameters *codec = stream->codecpar;
-        // codecpar: 编码参数（格式/分辨率/采样率等），不依赖解码器就能读
+    m_totalDuration = (double)m_formatCtx->duration / AV_TIME_BASE;
+    emit durationReady(m_totalDuration);
 
-        if (codec->codec_type == AVMEDIA_TYPE_AUDIO) {
-            AUSTREAM = i;
-            const AVCodec *cc = avcodec_find_decoder(codec->codec_id);
-            // avcodec_find_decoder: 根据 codec_id 查找对应解码器(如 AAC→aac解码器)
-            aucodec = avcodec_alloc_context3(cc);
-            // avcodec_alloc_context3: 用指定解码器创建解码上下文
-            avcodec_parameters_to_context(aucodec, codec);
-            // 把 codecpar 里的参数拷进解码上下文
-            avcodec_open2(aucodec, cc, nullptr);
-            // 打开解码器，准备解码
-            m_audioSampleRate = aucodec->sample_rate;
+    double frameDelay = 0;
+    for (unsigned i = 0; i < m_formatCtx->nb_streams; i++) {
+        AVStream *stream = m_formatCtx->streams[i];
+        AVCodecParameters *codecpar = stream->codecpar;
+
+        if (codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            m_audioStreamIndex = i;
+            const AVCodec *codec = avcodec_find_decoder(codecpar->codec_id);
+            m_audioCodecCtx = avcodec_alloc_context3(codec);
+            avcodec_parameters_to_context(m_audioCodecCtx, codecpar);
+            avcodec_open2(m_audioCodecCtx, codec, nullptr);
+            m_audioSampleRate = m_audioCodecCtx->sample_rate;
         }
 
-        if (codec->codec_type == AVMEDIA_TYPE_VIDEO) {
-            const AVCodec *cc = avcodec_find_decoder(codec->codec_id);
-            avcodec = avcodec_alloc_context3(cc);
-            avcodec_parameters_to_context(avcodec, codec);
-            avcodec_open2(avcodec, cc, nullptr);
-            AVSTREAM = i;
+        if (codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            m_videoStreamIndex = i;
+            const AVCodec *codec = avcodec_find_decoder(codecpar->codec_id);
+            m_videoCodecCtx = avcodec_alloc_context3(codec);
+            avcodec_parameters_to_context(m_videoCodecCtx, codecpar);
+            avcodec_open2(m_videoCodecCtx, codec, nullptr);
 
-            // avg_frame_rate: 平均帧率的分数表示（如 30000/1001=29.97fps）
             frameDelay = (double)stream->avg_frame_rate.den
-                         / stream->avg_frame_rate.num * 1000;  // 帧间隔(毫秒)
-            videoTimeBase = stream->time_base;
-            // time_base: PTS 的计时单位（如 1/90000 秒 → 1个PTS单位=1/90000秒）
-            m_baseFrameDelay = frameDelay;
+                       / stream->avg_frame_rate.num * 1000.0;
+            m_videoTimeBase  = stream->time_base;
+            m_frameDelayMs   = frameDelay;
         }
     }
-    m_timer->setInterval((int)(frameDelay/speed));
+
+    m_timer->setInterval((int)(frameDelay / m_speed));
     m_timer->setSingleShot(false);
     m_timer->start();
-    swsnew=false;
-    swrnew=false;
+    m_swsReady = false;
+    m_swrReady = false;
 }
 
+// ==================== 停止 / 变速 ====================
 void DecoderWorker::stop()
 {
     m_timer->stop();
 }
 
-void DecoderWorker::seek(int64_t targetUs)
+void DecoderWorker::setSpeed(double speed)
 {
-
-    if(targetUs==-1)
-    {
-        videoQueue->setGO();
-        m_timer->start();
-        targetUs=0;
-    }
-    av_seek_frame(Ctx, -1, targetUs, AVSEEK_FLAG_BACKWARD);
-    // -1: 时间单位用 AV_TIME_BASE（微秒）
-    // AVSEEK_FLAG_BACKWARD: 跳到目标时间之前最近的关键帧
-
-    avcodec_flush_buffers(avcodec);      // 清视频解码器残留
-    avcodec_flush_buffers(aucodec);      // 清音频解码器残留
-    videoQueue->clear();
-    decodeOneVideoFrame();
+    m_speed = speed;
+    m_swrReady = false;
+    m_timer->setInterval((int)(m_frameDelayMs / m_speed));
+    double posSec = audioClock / 1000000.0;
+    m_audioSamplesWritten = (long long)(posSec * (m_audioSampleRate / m_speed));
 }
 
+// ==================== Seek ====================
+void DecoderWorker::seek(int64_t targetUs)
+{
+    m_timer->stop();
+
+    av_seek_frame(m_formatCtx, -1, targetUs, AVSEEK_FLAG_BACKWARD);
+    avcodec_flush_buffers(m_videoCodecCtx);
+    avcodec_flush_buffers(m_audioCodecCtx);
+    m_videoQueue->clear();
+    decodeOneVideoFrame();
+
+    pendingSeek = false;
+    m_timer->start();
+    emit isSeekFalse();
+}
+
+// ==================== 定时解码（每 16ms） ====================
 void DecoderWorker::decodeBatch()
 {
+    if (pendingSeek) return;
+
     int videoFrames = 0;
     const int MAX_PER_BATCH = 3;
     int ret = 0;
 
     while (videoFrames < MAX_PER_BATCH) {
-        ret = av_read_frame(Ctx, pkt);
-        if (ret < 0) break;           // EOF 或错误
+        if (pendingSeek) return;
 
-        if (pkt->stream_index == AVSTREAM) {
-            avcodec_send_packet(avcodec, pkt);
-            av_packet_unref(pkt);
-            while (avcodec_receive_frame(avcodec, frame) == 0) {
-                if (!swsnew) {
-                    sws = sws_getContext(
-                        frame->width, frame->height, AV_PIX_FMT_YUV420P,
-                        frame->width, frame->height, AV_PIX_FMT_RGB24,
+        ret = av_read_frame(m_formatCtx, m_packet);
+        if (ret < 0) break;
+
+        // ---- 视频包 ----
+        if (m_packet->stream_index == m_videoStreamIndex) {
+            avcodec_send_packet(m_videoCodecCtx, m_packet);
+            av_packet_unref(m_packet);
+
+            while (avcodec_receive_frame(m_videoCodecCtx, m_frame) == 0) {
+                if (!m_swsReady) {
+                    m_sws = sws_getContext(
+                        m_frame->width, m_frame->height, AV_PIX_FMT_YUV420P,
+                        m_frame->width, m_frame->height, AV_PIX_FMT_RGB24,
                         SWS_BILINEAR, nullptr, nullptr, nullptr);
-                    swsnew = true;
+                    m_swsReady = true;
                 }
-                int rgbStride = frame->width * 3;
-                int rgbSize   = frame->height * rgbStride;
-                uint8_t *rgbBuf = (uint8_t *)malloc(rgbSize);
-                sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
-                          &rgbBuf, &rgbStride);
 
-                QImage decoded(rgbBuf, frame->width, frame->height,
+                int rgbStride = m_frame->width * 3;
+                int rgbSize   = m_frame->height * rgbStride;
+                uint8_t *rgbBuf = (uint8_t *)malloc(rgbSize);
+                sws_scale(m_sws, m_frame->data, m_frame->linesize,
+                          0, m_frame->height, &rgbBuf, &rgbStride);
+
+                QImage decoded(rgbBuf, m_frame->width, m_frame->height,
                                QImage::Format_RGB888);
+
                 FrameData data;
-                data.pts_us = frame->pts * av_q2d(videoTimeBase) * 1000000;
-                data.image = decoded.copy();
-                videoQueue->push(data);
+                data.pts_us = m_frame->pts * av_q2d(m_videoTimeBase) * 1000000.0;
+                data.image  = decoded.copy();
+                m_videoQueue->push(data);
                 free(rgbBuf);
                 videoFrames++;
                 break;
             }
         }
-        else if (pkt->stream_index == AUSTREAM) {
-            avcodec_send_packet(aucodec, pkt);
-            av_packet_unref(pkt);
+        // ---- 音频包 ----
+        else if (m_packet->stream_index == m_audioStreamIndex) {
+            avcodec_send_packet(m_audioCodecCtx, m_packet);
+            av_packet_unref(m_packet);
 
-            while (avcodec_receive_frame(aucodec, frame) == 0) {
-                if (!swrnew) {
-                    swr = swr_alloc();
-                    av_opt_set_int(swr, "in_sample_fmt",  frame->format, 0);
-                    av_opt_set_int(swr, "in_sample_rate", frame->sample_rate, 0);
-                    av_opt_set_chlayout(swr, "in_chlayout", &frame->ch_layout, 0);
-                    av_opt_set_int(swr, "out_sample_fmt",  AV_SAMPLE_FMT_S16, 0);
-                    av_opt_set_int(swr, "out_sample_rate", m_audioSampleRate / speed, 0);
-                    av_opt_set_chlayout(swr, "out_chlayout", &frame->ch_layout, 0);
-                    swr_init(swr);
-                    swrnew = true;
+            while (avcodec_receive_frame(m_audioCodecCtx, m_frame) == 0) {
+                if (!m_swrReady) {
+                    m_swr = swr_alloc();
+                    av_opt_set_int(m_swr, "in_sample_fmt",  m_frame->format, 0);
+                    av_opt_set_int(m_swr, "in_sample_rate", m_frame->sample_rate, 0);
+                    av_opt_set_chlayout(m_swr, "in_chlayout", &m_frame->ch_layout, 0);
+                    av_opt_set_int(m_swr, "out_sample_fmt",  AV_SAMPLE_FMT_S16, 0);
+                    av_opt_set_int(m_swr, "out_sample_rate",
+                                   m_audioSampleRate / m_speed, 0);
+                    av_opt_set_chlayout(m_swr, "out_chlayout", &m_frame->ch_layout, 0);
+                    swr_init(m_swr);
+                    m_swrReady = true;
                 }
 
-                int outSamplesMax = (int)(frame->nb_samples / speed) + 256;
-                int outBytes = outSamplesMax * frame->ch_layout.nb_channels * 2;
+                int outSamplesMax = (int)(m_frame->nb_samples / m_speed) + 256;
+                int outBytes = outSamplesMax * m_frame->ch_layout.nb_channels * 2;
                 std::vector<uint8_t> outBuf(outBytes);
                 uint8_t *outPtr = outBuf.data();
 
-                int outSamples = swr_convert(swr,
-                                             &outPtr, frame->nb_samples,
-                                             (const uint8_t **)frame->data, frame->nb_samples);
-                totalWritten += outSamples;
-                audioClock = totalWritten / ((double)m_audioSampleRate / speed) * 1000000;
+                int outSamples = swr_convert(m_swr,
+                                             &outPtr, m_frame->nb_samples,
+                                             (const uint8_t **)m_frame->data,
+                                             m_frame->nb_samples);
+                m_audioSamplesWritten += outSamples;
+                audioClock = (long long)(m_audioSamplesWritten
+                              / ((double)m_audioSampleRate / m_speed) * 1000000.0);
 
-                emit audioReady(QByteArray((const char*)outBuf.data(), outSamples
-                                           * frame->ch_layout.nb_channels * 2),
-                                aucodec->ch_layout.nb_channels, m_audioSampleRate);
+                emit audioReady(
+                    QByteArray((const char *)outBuf.data(),
+                               outSamples * m_frame->ch_layout.nb_channels * 2),
+                    m_audioCodecCtx->ch_layout.nb_channels,
+                    m_audioSampleRate);
             }
         }
+        // ---- 字幕/数据流 ----
         else {
-            av_packet_unref(pkt);      // 字幕/数据流，释放
+            av_packet_unref(m_packet);
         }
     }
 
     if (ret < 0) {
         m_timer->stop();
-        videoQueue->setDone();
+        m_videoQueue->setDone();
         emit closeFrame();
     }
 }
 
-void DecoderWorker::start()
-{
-    m_timer->start();
-}
+// ==================== seek 后解码一帧视频 ====================
 void DecoderWorker::decodeOneVideoFrame()
 {
-    av_packet_unref(pkt);
-    while(av_read_frame(Ctx,pkt)>=0)
-    {
-        if(pkt->stream_index==AVSTREAM)
-        {
-            avcodec_send_packet(avcodec,pkt);
-            av_packet_unref(pkt);
-            while(avcodec_receive_frame(avcodec,frame)==0)
-            {
-                if (!swsnew) {
-                    sws = sws_getContext(
-                        frame->width, frame->height, AV_PIX_FMT_YUV420P,
-                        // AV_PIX_FMT_YUV420P: H.264 最常见像素格式
-                        frame->width, frame->height, AV_PIX_FMT_RGB24,
-                        // AV_PIX_FMT_RGB24: QImage::Format_RGB888 对应的格式
-                        SWS_BILINEAR, nullptr, nullptr, nullptr);
-                    swsnew = true;
-                }
-                int rgbStride = frame->width * 3;    // RGB24 每行字节数
-                int rgbSize   = frame->height * rgbStride;
-                uint8_t *rgbBuf = (uint8_t *)malloc(rgbSize);
-                sws_scale(sws, frame->data, frame->linesize, 0, frame->height,
-                          &rgbBuf, &rgbStride);
-                // sws_scale: YUV420P → RGB24，输出到 rgbBuf
+    av_packet_unref(m_packet);
+    while (av_read_frame(m_formatCtx, m_packet) >= 0) {
+        if (m_packet->stream_index == m_videoStreamIndex) {
+            avcodec_send_packet(m_videoCodecCtx, m_packet);
+            av_packet_unref(m_packet);
 
-                QImage decoded(rgbBuf, frame->width, frame->height,
+            if (avcodec_receive_frame(m_videoCodecCtx, m_frame) == 0) {
+                if (!m_swsReady) {
+                    m_sws = sws_getContext(
+                        m_frame->width, m_frame->height, AV_PIX_FMT_YUV420P,
+                        m_frame->width, m_frame->height, AV_PIX_FMT_RGB24,
+                        SWS_BILINEAR, nullptr, nullptr, nullptr);
+                    m_swsReady = true;
+                }
+
+                int rgbStride = m_frame->width * 3;
+                int rgbSize   = m_frame->height * rgbStride;
+                uint8_t *rgbBuf = (uint8_t *)malloc(rgbSize);
+                sws_scale(m_sws, m_frame->data, m_frame->linesize,
+                          0, m_frame->height, &rgbBuf, &rgbStride);
+
+                QImage decoded(rgbBuf, m_frame->width, m_frame->height,
                                QImage::Format_RGB888);
+
                 FrameData data;
-                data.pts_us=frame->pts * av_q2d(videoTimeBase) * 1000000;
-                data.image=decoded.copy();
-                videoQueue->push(data);
+                data.pts_us = m_frame->pts * av_q2d(m_videoTimeBase) * 1000000.0;
+                data.image  = decoded.copy();
+                m_videoQueue->push(data);
                 free(rgbBuf);
+
                 audioClock = data.pts_us;
-                totalWritten = audioClock * (m_audioSampleRate/speed) / 1000000;
-                break;
+                m_audioSamplesWritten = (long long)(audioClock
+                    * (m_audioSampleRate / m_speed) / 1000000.0);
+                return;
             }
-            break;
-        }
-        else{
-            av_packet_unref(pkt);
+        } else {
+            av_packet_unref(m_packet);
         }
     }
-}
-
-void DecoderWorker::setSpeed(double seep)
-{
-    speed=seep;
-    swrnew =false;
-    m_timer->setInterval((int)(m_baseFrameDelay / speed));
-    double posSec=audioClock/1000000.0;
-    totalWritten=posSec*(m_audioSampleRate/speed);
 }

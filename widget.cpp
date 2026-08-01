@@ -3,9 +3,8 @@
 Widget::Widget(QWidget *parent)
     : QWidget(parent)
 {
-    // ---- 非原生文件对话框（可套 QSS）----
-    QFileDialog dlg(this, "选择视频", "",
-                    "视频文件(*.mp4)");
+    // ==================== 文件选择对话框 ====================
+    QFileDialog dlg(this, "选择视频", "", "视频文件(*.mp4)");
     dlg.setOption(QFileDialog::DontUseNativeDialog);
     dlg.setFileMode(QFileDialog::ExistingFile);
     dlg.setStyleSheet(R"(
@@ -20,506 +19,382 @@ Widget::Widget(QWidget *parent)
         QListView::item:selected { background: #00d4ff; color: #0a0a0f; }
     )");
     if (dlg.exec() != QDialog::Accepted) return;
-    QString filepath = dlg.selectedFiles().first();
-    setFocusPolicy(Qt::StrongFocus);   // 接收键盘事件（空格暂停）
+    QString filepath = dlg.selectedFiles().constFirst();
+    setFocusPolicy(Qt::StrongFocus);
 
-    // ---- 多线程解码初始化 ----
-    videoQueue = new FrameQueue;
-    worker = new DecoderWorker(videoQueue);
-    decoderThread = new QThread(this);
-    worker->moveToThread(decoderThread);
+    // ==================== 解码线程初始化 ====================
+    m_videoQueue = new FrameQueue;
+    m_worker = new DecoderWorker(m_videoQueue);
+    m_decoderThread = new QThread(this);
+    m_worker->moveToThread(m_decoderThread);
 
-    connect(decoderThread, &QThread::started, worker, [=]() { worker->open(filepath); });
-    connect(worker, &DecoderWorker::audioReady, this, &Widget::onAudioReady);
-    connect(worker, &DecoderWorker::durationReady, this, &Widget::onDurationReady);
-    connect(worker, &DecoderWorker::openFailed, this, &Widget::onOpenFailed);
-    connect(decoderThread, &QThread::finished, worker, &QObject::deleteLater);
+    connect(m_decoderThread, &QThread::started,
+            m_worker, [=]() { m_worker->open(filepath); });
+    connect(m_worker, &DecoderWorker::audioReady,
+            this, &Widget::onAudioReady);
+    connect(m_worker, &DecoderWorker::durationReady,
+            this, &Widget::onDurationReady);
+    connect(m_worker, &DecoderWorker::openFailed,
+            this, &Widget::onOpenFailed);
+    connect(m_decoderThread, &QThread::finished,
+            m_worker, &QObject::deleteLater);
 
-    // ---- UI 控件 ----
-    times = new QTimer(this);
-    timesize = new QSlider(Qt::Horizontal, this);
-    zero = new QLabel(this);
-    stop = new QLabel(this);
-    timesize->setValue(0);
-    timesize->setRange(0, 100); // 占位，真实范围在 onDurationReady 设
-    zero->setText("0:00");
-    stop->setText("0:00");
-    // 垂直音量滑条：右侧
-    volSlider = new QSlider(Qt::Vertical, this);
-    volSlider->setRange(0, 100);
-    volSlider->setValue(80);
-    volLabel = new QLabel("Vol", this);
+    // ==================== UI 控件 ====================
+    m_playbackTimer = new QTimer(this);
 
-    // 倍速标签
-    speedLabel = new QLabel("1.0x", this);
-    speedLabel->setStyleSheet(R"(
+    m_seekSlider = new QSlider(Qt::Horizontal, this);
+    m_seekSlider->setValue(0);
+    m_seekSlider->setRange(0, 100);
+
+    m_currentTimeLbl = new QLabel("0:00", this);
+    m_durationLbl    = new QLabel("0:00", this);
+
+    m_volumeSlider = new QSlider(Qt::Vertical, this);
+    m_volumeSlider->setRange(0, 100);
+    m_volumeSlider->setValue(80);
+    m_volumeLabel = new QLabel("Vol", this);
+
+    m_speedLabel = new QLabel("1.0x", this);
+    m_speedLabel->setStyleSheet(R"(
         QLabel {
-            color: #00d4ff;
-            font-size: 13px;
-            font-weight: bold;
+            color: #00d4ff; font-size: 13px; font-weight: bold;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                 stop:0 rgba(0,212,255,0.15), stop:1 rgba(123,47,247,0.15));
-            border: 1px solid #00d4ff;
-            border-radius: 4px;
-            padding: 3px 10px;
+            border: 1px solid #00d4ff; border-radius: 4px; padding: 3px 10px;
         }
     )");
-    speedLabel->adjustSize();
+    m_speedLabel->adjustSize();
 
-    // 播放列表按钮
-    playlistBtn = new QPushButton("≡ 列表", this);
-    playlistBtn->setStyleSheet(R"(
+    m_playlistBtn = new QPushButton("≡ 列表", this);
+    m_playlistBtn->setStyleSheet(R"(
         QPushButton {
-            color: #00d4ff;
-            font-size: 12px;
-            font-weight: bold;
+            color: #00d4ff; font-size: 12px; font-weight: bold;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                 stop:0 rgba(0,212,255,0.15), stop:1 rgba(123,47,247,0.15));
-            border: 1px solid #00d4ff;
-            border-radius: 4px;
-            padding: 3px 10px;
+            border: 1px solid #00d4ff; border-radius: 4px; padding: 3px 10px;
         }
-        QPushButton:hover {
-            background: rgba(0,212,255,0.3);
-            border-color: #ffffff;
-            color: #ffffff;
-        }
+        QPushButton:hover { background: rgba(0,212,255,0.3); border-color: #ffffff; color: #ffffff; }
     )");
-    playlistBtn->adjustSize();
+    m_playlistBtn->adjustSize();
 
-    // 添加文件按钮
-    addFilesBtn = new QPushButton("+", this);
-    addFilesBtn->setStyleSheet(R"(
+    m_addFilesBtn = new QPushButton("+", this);
+    m_addFilesBtn->setStyleSheet(R"(
         QPushButton {
-            color: #00d4ff;
-            font-size: 14px;
-            font-weight: bold;
+            color: #00d4ff; font-size: 14px; font-weight: bold;
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                 stop:0 rgba(0,212,255,0.15), stop:1 rgba(123,47,247,0.15));
-            border: 1px solid #00d4ff;
-            border-radius: 4px;
-            padding: 3px 8px;
+            border: 1px solid #00d4ff; border-radius: 4px; padding: 3px 8px;
         }
-        QPushButton:hover {
-            background: rgba(0,212,255,0.3);
-            border-color: #ffffff;
-            color: #ffffff;
-        }
+        QPushButton:hover { background: rgba(0,212,255,0.3); border-color: #ffffff; color: #ffffff; }
     )");
-    addFilesBtn->adjustSize();
+    m_addFilesBtn->adjustSize();
 
-    // 播放列表面板
-    playlist = new QListWidget(this);
-    playlist->setDragDropMode(QAbstractItemView::InternalMove);
-    playlist->setDefaultDropAction(Qt::MoveAction);
-    playlist->setSelectionMode(QAbstractItemView::SingleSelection);
-    playlist->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    playlist->hide();
+    m_playlistWidget = new QListWidget(this);
+    m_playlistWidget->setDragDropMode(QAbstractItemView::InternalMove);
+    m_playlistWidget->setDefaultDropAction(Qt::MoveAction);
+    m_playlistWidget->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_playlistWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_playlistWidget->hide();
 
-    // 允许从外部拖入文件
     setAcceptDrops(true);
 
-    // ---- QSS 美化 ----
+    // ==================== 全局 QSS ====================
     setStyleSheet(R"(
-        Widget {
-            background-color: #0a0a0f;
-        }
+        Widget { background-color: #0a0a0f; }
 
-        /* ── 水平进度条 ── */
         QSlider::groove:horizontal {
-            height: 3px;
-            background: #1e1e2e;
-            border-radius: 1px;
+            height: 3px; background: #1e1e2e; border-radius: 1px;
         }
         QSlider::sub-page:horizontal {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #00d4ff, stop:1 #7b2ff7);
-            border-radius: 1px;
+                stop:0 #00d4ff, stop:1 #7b2ff7); border-radius: 1px;
         }
         QSlider::handle:horizontal {
-            width: 14px;
-            height: 14px;
-            margin: -6px 0;
-            background: #ffffff;
-            border: 2px solid #00d4ff;
-            border-radius: 7px;
+            width: 14px; height: 14px; margin: -6px 0;
+            background: #ffffff; border: 2px solid #00d4ff; border-radius: 7px;
         }
-        QSlider::handle:horizontal:hover {
-            background: #00d4ff;
-            border-color: #ffffff;
-        }
+        QSlider::handle:horizontal:hover { background: #00d4ff; border-color: #ffffff; }
 
-        /* ── 垂直音量条 ── */
         QSlider::groove:vertical {
-            width: 3px;
-            background: #1e1e2e;
-            border-radius: 1px;
+            width: 3px; background: #1e1e2e; border-radius: 1px;
         }
         QSlider::sub-page:vertical {
             background: qlineargradient(x1:0, y1:1, x2:0, y2:0,
-                stop:0 #00d4ff, stop:1 #7b2ff7);
-            border-radius: 1px;
+                stop:0 #00d4ff, stop:1 #7b2ff7); border-radius: 1px;
         }
         QSlider::handle:vertical {
-            width: 14px;
-            height: 14px;
-            margin: 0 -6px;
-            background: #ffffff;
-            border: 2px solid #00d4ff;
-            border-radius: 7px;
+            width: 14px; height: 14px; margin: 0 -6px;
+            background: #ffffff; border: 2px solid #00d4ff; border-radius: 7px;
         }
-        QSlider::handle:vertical:hover {
-            background: #00d4ff;
-            border-color: #ffffff;
-        }
+        QSlider::handle:vertical:hover { background: #00d4ff; border-color: #ffffff; }
 
-        /* ── 时间标签 ── */
         QLabel {
-            color: #6c7086;
-            font-size: 11px;
-            font-family: "Consolas", "Courier New", monospace;
-            background: transparent;
+            color: #6c7086; font-size: 11px;
+            font-family: "Consolas", "Courier New", monospace; background: transparent;
         }
 
-        /* ── 播放列表 ── */
         QListWidget {
-            background: rgba(10,10,30,0.95);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 8px;
-            outline: none;
+            background: rgba(10,10,30,0.95); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px; outline: none;
         }
-        QListWidget::item {
-            color: #999;
-            padding: 8px 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-        }
-        QListWidget::item:hover {
-            background: rgba(255,255,255,0.06);
-            color: #ddd;
-        }
-        QListWidget::item:selected {
-            background: rgba(0,212,255,0.15);
-            color: #00d4ff;
-            border-left: 2px solid #00d4ff;
-        }
+        QListWidget::item { color: #999; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        QListWidget::item:hover { background: rgba(255,255,255,0.06); color: #ddd; }
+        QListWidget::item:selected { background: rgba(0,212,255,0.15); color: #00d4ff; border-left: 2px solid #00d4ff; }
     )");
 
-    // ---- UI 布局（resize 之后 width/height 才正确）----
-    this->resize(800, 600);
-    // ---- 信号连接 ----
-    connect(times, &QTimer::timeout, this, &Widget::strat);
+    addToPlaylist(dlg.selectedFiles());
+    resize(800, 600);
 
-    // 进度条值变化 → 更新时间标签（拖动时跟着变）
-    connect(timesize, &QSlider::valueChanged, this, [=](int val) {
+    // ==================== 信号连接 ====================
+    // 定时器 → 每帧处理
+    connect(m_playbackTimer, &QTimer::timeout, this, &Widget::onPlaybackTick);
+
+    // 进度条拖动 → 更新时间标签
+    connect(m_seekSlider, &QSlider::valueChanged, this, [=](int val) {
         int m = val / 60;
         int s = val % 60;
-        zero->setText(QString("%1:%2").arg(m).arg(s, 2, 10, QChar('0')));
+        m_currentTimeLbl->setText(QString("%1:%2").arg(m).arg(s, 2, 10, QChar('0')));
     });
 
-    // 用户按下/松开滑块 → seek
-    connect(timesize, &QAbstractSlider::sliderPressed,  this, [=]() { m_isSeeking = true; });
-    connect(timesize, &QAbstractSlider::sliderReleased, this, static_cast<void(Widget::*)()>(&Widget::seek));
-    connect(volSlider,&QSlider::valueChanged,this,[=]()
-            {
-        int val=volSlider->value();
-        if(audio){
-        audio->setVolume(val/100.0);
-        }
+    // 进度条按下/松开 → seek
+    connect(m_seekSlider, &QAbstractSlider::sliderPressed,
+            this, [=]() { m_isSeeking = true; });
+    connect(m_seekSlider, &QAbstractSlider::sliderReleased,
+            this, static_cast<void(Widget::*)()>(&Widget::seek));
+
+    // 音量
+    connect(m_volumeSlider, &QSlider::valueChanged, this, [=](int val) {
+        if (m_audioPlayer)
+            m_audioPlayer->setVolume(val / 100.0);
     });
-    connect(worker,&DecoderWorker::closeFrame,this,&Widget::closeOver);
-    connect(this, &Widget::requestSeek, worker, &DecoderWorker::seek);
-    connect(this,&Widget::speedvalue,worker,&DecoderWorker::setSpeed);
-    connect(playlistBtn, &QPushButton::clicked, this, [=]() {
-        playlistVisible = !playlistVisible;
-        playlist->setVisible(playlistVisible);
-        addFilesBtn->setVisible(playlistVisible);
+
+    // 解码线程信号
+    connect(m_worker, &DecoderWorker::isSeekFalse,
+            this, [=]() { m_isSeeking = false; });
+    connect(m_worker, &DecoderWorker::closeFrame,
+            this, &Widget::onPlaybackFinished);
+
+    // 跨线程信号
+    connect(this, &Widget::requestSeek,  m_worker, &DecoderWorker::seek);
+    connect(this, &Widget::speedChanged, m_worker, &DecoderWorker::setSpeed);
+
+    // 播放列表按钮
+    connect(m_playlistBtn, &QPushButton::clicked, this, [=]() {
+        m_playlistVisible = !m_playlistVisible;
+        m_playlistWidget->setVisible(m_playlistVisible);
+        m_addFilesBtn->setVisible(m_playlistVisible);
     });
-    connect(addFilesBtn, &QPushButton::clicked, [=]() {
-        QStringList files = QFileDialog::getOpenFileNames(this, "添加视频",
-            "", "视频文件(*.mp4 *.mkv *.avi *.mov *.flv)");
+
+    // 添加文件
+    connect(m_addFilesBtn, &QPushButton::clicked, [=]() {
+        QStringList files = QFileDialog::getOpenFileNames(
+            this, "添加视频", "", "视频文件(*.mp4 *.mkv *.avi *.mov *.flv)");
         if (!files.isEmpty()) addToPlaylist(files);
     });
-    connect(playlist, &QListWidget::itemDoubleClicked, this, [=](QListWidgetItem *item) {
-        if(!item)
-            {
-            return;
+
+    // 双击播放列表项 → 切换视频
+    connect(m_playlistWidget, &QListWidget::itemDoubleClicked,
+            this, [=](QListWidgetItem *item) {
+        if (!item) return;
+        QString path = item->data(Qt::UserRole).toString();
+
+        m_playbackTimer->stop();
+        m_playbackSpeed = 1.0;
+        m_speedLabel->setText("1.0x");
+        emit speedChanged(m_playbackSpeed);
+
+        if (m_audioPlayer) {
+            delete m_audioPlayer;
+            m_audioPlayer = nullptr;
         }
-        QString filenames=item->data(Qt::UserRole).toString();
-        times->stop();
-        if(audio){
-            delete audio;
-            audio=nullptr;
-        }
-        newaudio=false;
-        pendingFrame=QImage();
-        pendingPts = -1;
-        videoQueue->clear();
-        emit openstart(filenames);
-        image=QImage();
-        justSeeket=false;
-        paused=false;
+        m_audioNeedsInit = false;
+        m_pendingFrame = QImage();
+        m_pendingPts   = -1;
+        m_videoQueue->clear();
+        emit fileOpened(path);
+        m_currentImage = QImage();
+        m_justSeeked   = false;
+        m_paused       = false;
     });
-    connect(this,&Widget::openstart,worker,&DecoderWorker::open);
+    connect(this, &Widget::fileOpened, m_worker, &DecoderWorker::open);
+
     QWidget::resizeEvent(nullptr);
-    decoderThread->start();
+    m_decoderThread->start();
 }
 
-Widget::~Widget() {
-    times->stop();
-    if (decoderThread) {
-        QMetaObject::invokeMethod(worker, "stop", Qt::BlockingQueuedConnection);
-        decoderThread->quit();
-        decoderThread->wait();
+Widget::~Widget()
+{
+    m_playbackTimer->stop();
+    if (m_decoderThread) {
+        QMetaObject::invokeMethod(m_worker, "stop", Qt::BlockingQueuedConnection);
+        m_decoderThread->quit();
+        m_decoderThread->wait();
     }
-    if (audio) {
-        audio->stop();
-        delete audio;
+    if (m_audioPlayer) {
+        m_audioPlayer->stop();
+        delete m_audioPlayer;
     }
-    delete videoQueue;
-    pendingFrame = QImage();
-    image = QImage();
+    delete m_videoQueue;
 }
 
-// ========== 每帧回调：从队列取帧 → 音视频同步 → 显示 ==========
-void Widget::strat()
+// ==================== 每帧回调 ====================
+void Widget::onPlaybackTick()
 {
     if (m_isSeeking) return;
-    if (paused) return;
+    if (m_paused)    return;
 
-    // 更新进度条
-    timesize->setValue(worker->audioClock / 1000000);
+    // 更新进度条（音频时钟驱动）
+    m_seekSlider->setValue((int)(m_worker->audioClock / 1000000));
 
-    //跳转进度条更新
-    // 检查缓存帧是否已到显示时间
-    if (!pendingFrame.isNull() && pendingPts <= worker->audioClock + 30000) {
-        image = pendingFrame;
-        pendingFrame = QImage();
+    // 检查缓存帧是否到显示时间
+    if (!m_pendingFrame.isNull() && m_pendingPts <= m_worker->audioClock + 30000) {
+        m_currentImage = m_pendingFrame;
+        m_pendingFrame = QImage();
         update();
     }
-    // 从队列取帧
-    FrameData data = videoQueue->pop(); // 阻塞等帧
-    // 太晚 → 丢弃 还有特殊情况 使用进度条跳转
-    if(justSeeket)
-    {
-        justSeeket=false;
+
+    FrameData data = m_videoQueue->pop();   // 阻塞等帧
+
+    if (m_justSeeked) {
+        m_justSeeked = false;               // seek 后首帧不检查"太晚"
+    } else if (data.pts_us < m_worker->audioClock - 100000) {
+        return;                             // 太晚，丢弃
     }
-    else if (data.pts_us < worker->audioClock - 100000) return;
-    // 太早 → 缓存
-    if (data.pts_us > worker->audioClock + 30000) {
-        pendingFrame = data.image;
-        pendingPts = data.pts_us;
+
+    if (data.pts_us > m_worker->audioClock + 30000) {
+        m_pendingFrame = data.image;        // 太早，缓存
+        m_pendingPts   = data.pts_us;
         return;
     }
-    // 正好 → 显示
-    image = data.image;
-    pendingFrame = QImage();
+
+    m_currentImage = data.image;
+    m_pendingFrame = QImage();
     update();
 }
 
-// ========== 绘制视频画面 ==========
+// ==================== 渲染 ====================
 void Widget::paintEvent(QPaintEvent *)
 {
-    if (image.isNull()) return;
+    if (m_currentImage.isNull()) return;
     QPainter painter(this);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    int m = 35;                                      // 底部留给进度条
-    QRect target = rect().adjusted(0, 0, 0, -m);
-    painter.drawImage(target, image);
+    int margin = 35;
+    QRect target = rect().adjusted(0, 0, 0, -margin);
+    painter.drawImage(target, m_currentImage);
 }
 
-// ========== 键盘事件 ==========
+// ==================== 键盘事件 ====================
 void Widget::keyPressEvent(QKeyEvent *event)
 {
-    if (event->key() == Qt::Key_Space){
-        paused = !paused;
-    }
-    if(event->key()==Qt::Key_Escape&&this->isFullScreen())
-    {
-        this->showNormal();
-        timesize->show(); zero->show(); stop->show();
-        volSlider->show(); volLabel->show();speedLabel->show();
-        playlistBtn->show();
-    }
-    // S 截图
-    if (event->key() == Qt::Key_S && !image.isNull())
-    {
-        QString imagePath=QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)+"/";
-        imagePath+=QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
-        imagePath+="_截图.png";
-        image.save(imagePath);
+    // 空格 → 暂停/播放
+    if (event->key() == Qt::Key_Space) {
+        m_paused = !m_paused;
     }
 
-    // —— 倍速快捷键 ——
-    if (event->key() == Qt::Key_1)       // 1.0x
-    {
-        spedd=1.0;
-        speedLabel->setText("1.0x");
-        emit speedvalue(spedd);
-        newaudio=false;
-        times->setInterval(16/spedd);
+    // Esc → 退出全屏
+    if (event->key() == Qt::Key_Escape && isFullScreen()) {
+        showNormal();
+        m_seekSlider->show();   m_currentTimeLbl->show(); m_durationLbl->show();
+        m_volumeSlider->show(); m_volumeLabel->show();    m_speedLabel->show();
+        m_playlistBtn->show();
     }
-    else if (event->key() == Qt::Key_2)  // 1.5x
-    {
-        spedd=1.5;
-        speedLabel->setText("1.5x");
-        emit speedvalue(spedd);
-        newaudio=false;
-        times->setInterval(16/spedd);
+
+    // S → 截图到桌面
+    if (event->key() == Qt::Key_S && !m_currentImage.isNull()) {
+        QString path = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)
+                     + "/" + QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss")
+                     + "_截图.png";
+        m_currentImage.save(path);
     }
-    else if (event->key() == Qt::Key_3)  // 2.0x
-    {
-        spedd=2.0;
-        speedLabel->setText("2.0x");
-        emit speedvalue(spedd);
-        newaudio=false;
-        times->setInterval(16/spedd);
+
+    // 倍速快捷键（互斥）
+    if (event->key() == Qt::Key_1) {
+        m_playbackSpeed = 1.0;
+    } else if (event->key() == Qt::Key_2) {
+        m_playbackSpeed = 1.5;
+    } else if (event->key() == Qt::Key_3) {
+        m_playbackSpeed = 2.0;
+    }
+
+    // 左箭头按住 → 临时 1.5x
+    if (event->key() == Qt::Key_Left && !event->isAutoRepeat()) {
+        m_playbackSpeed = 1.5;
+    }
+
+    // 统一处理倍速变更
+    if (event->key() == Qt::Key_1 || event->key() == Qt::Key_2
+        || event->key() == Qt::Key_3
+        || (event->key() == Qt::Key_Left && !event->isAutoRepeat())) {
+        m_speedLabel->setText(QString("%1x").arg(m_playbackSpeed, 0, 'f', 1));
+        emit speedChanged(m_playbackSpeed);
+        m_audioNeedsInit = false;
+        m_playbackTimer->setInterval((int)(16 / m_playbackSpeed));
     }
 }
 
+void Widget::keyReleaseEvent(QKeyEvent *event)
+{
+    // 左箭头松开 → 恢复 1.0x
+    if (event->key() == Qt::Key_Left && !event->isAutoRepeat()) {
+        m_playbackSpeed = 1.0;
+        m_speedLabel->setText("1.0x");
+        emit speedChanged(m_playbackSpeed);
+        m_audioNeedsInit = false;
+        m_playbackTimer->setInterval((int)(16 / m_playbackSpeed));
+    }
+}
+
+// ==================== 窗口事件 ====================
 void Widget::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    // 进度条：水平，底部
     int barY = height() - 35;
-    timesize->setGeometry(50, barY, width() - 100, 20);
 
-    // 时间标签
-    zero->move(10, barY + 2);
-    stop->move(width() - 45, barY + 2);
+    m_seekSlider->setGeometry(50, barY, width() - 100, 20);
+    m_currentTimeLbl->move(10, barY + 2);
+    m_durationLbl->move(width() - 45, barY + 2);
 
-    // 音量滑条：右下角垂直
     int volH = 100;
-    volSlider->setGeometry(width() - 30, barY - volH, 20, volH);
-    volLabel->move(width() - 28, barY - volH - 18);
+    m_volumeSlider->setGeometry(width() - 30, barY - volH, 20, volH);
+    m_volumeLabel->move(width() - 28, barY - volH - 18);
 
-    // 倍速标签：左下角
-    speedLabel->move(10, barY - 26);
+    m_speedLabel->move(10, barY - 26);
+    m_playlistBtn->move(65, barY - 26);
+    m_addFilesBtn->move(130, barY - 26);
 
-    // 播放列表按钮：倍速标签右侧
-    playlistBtn->move(65, barY - 26);
-    addFilesBtn->move(130, barY - 26);
-
-    // 播放列表：右侧面板
     int plW = 280;
-    playlist->setGeometry(width() - plW, 0, plW, barY - 4);
-
+    m_playlistWidget->setGeometry(width() - plW, 0, plW, barY - 4);
 }
 
 void Widget::mouseDoubleClickEvent(QMouseEvent *)
 {
-    if(this->isFullScreen())
-    {
-        this->showNormal();
-        timesize->show(); zero->show(); stop->show();
-        volSlider->show(); volLabel->show();
-        speedLabel->show();playlistBtn->show();
-    }
-    else{
-        this->showFullScreen();
-        timesize->hide(); zero->hide(); stop->hide();
-        volSlider->hide(); volLabel->hide();
-        speedLabel->hide();playlistBtn->hide();
+    if (isFullScreen()) {
+        showNormal();
+        m_seekSlider->show();   m_currentTimeLbl->show(); m_durationLbl->show();
+        m_volumeSlider->show(); m_volumeLabel->show();
+        m_speedLabel->show();   m_playlistBtn->show();
+    } else {
+        showFullScreen();
+        m_seekSlider->hide();   m_currentTimeLbl->hide(); m_durationLbl->hide();
+        m_volumeSlider->hide(); m_volumeLabel->hide();
+        m_speedLabel->hide();   m_playlistBtn->hide();
     }
 }
 
 void Widget::closeEvent(QCloseEvent *event)
 {
-    paused=true;
-    videoQueue->clear();
-    int ret=QMessageBox::question(this,"确认","确定要退出吗");
-    if(ret==QMessageBox::Yes)
-    {  event->accept();
-    }else{
-        paused=!paused;
+    m_paused = true;
+    m_videoQueue->clear();
+    int ret = QMessageBox::question(this, "确认", "确定要退出吗");
+    if (ret == QMessageBox::Yes) {
+        event->accept();
+    } else {
+        m_paused = false;
         event->ignore();
     }
 }
 
-void Widget::onAudioReady(QByteArray pcm, int channels, int sampleRate)
-{
-    if(!newaudio)
-    {
-        if(audio)
-        {
-            delete audio;
-            audio=nullptr;
-        }
-        audio=new AudioPlayer(sampleRate,channels);
-        audio->start();
-        newaudio=true;
-    }
-    const char* data=pcm.data();
-    int len=pcm.size();
-    audio->addPCM(data,len);
-}
-
-void Widget::onDurationReady(double seconds)
-{
-    timesize->setRange(0,(int)seconds);
-    timesize->setValue(0);
-    int fen=seconds/60;
-    int miao=(int)seconds%60;
-    stop->setText(QString("%1:%2").arg(fen).arg(miao, 2, 10, QChar('0')));
-    times->setInterval(16);
-    times->start();
-}
-
-void Widget::onOpenFailed(const QString &msg)
-{
-    QMessageBox::critical(this,"错误",msg,QMessageBox::Cancel);
-    qApp->exit(1);
-}
-
-void Widget::closeOver()
-{
-    times->stop();
-    int ret=QMessageBox::information(this,"警告","视频已经读完 是否重播",QMessageBox::Yes|QMessageBox::No);
-    if(ret==QMessageBox::Yes)
-    {
-        times->start();
-        seek(1);
-    }
-    else{
-        this->hide();
-        this->deleteLater();
-    }
-}
-
-// ========== Seek：拖进度条松开后跳转 ==========
-void Widget::seek(int ret)
-{
-    if(audio)
-    {
-        audio->stop();
-        audio->start();
-    }
-    int64_t seekTarget=-1;
-    pendingFrame = QImage();
-    pendingPts = -1;
-    videoQueue->clear();
-    m_isSeeking = false;
-    emit requestSeek(seekTarget);
-    justSeeket=true;
-}
-
-void Widget::seek()
-{
-    if(audio)
-    {
-        audio->stop();
-        audio->start();
-    }
-    int64_t seekTarget;
-    seekTarget = (int64_t)(timesize->value()) * AV_TIME_BASE;
-    pendingFrame = QImage();
-    pendingPts = -1;
-    m_isSeeking = false;
-    videoQueue->clear();
-    emit requestSeek(seekTarget);
-    justSeeket=true;
-}
-
-// ========== 拖拽文件到播放列表 ==========
+// ==================== 拖拽文件 ====================
 void Widget::dragEnterEvent(QDragEnterEvent *event)
 {
     if (event->mimeData()->hasUrls())
@@ -541,19 +416,83 @@ void Widget::addToPlaylist(const QStringList &files)
 {
     for (const QString &f : files) {
         QFileInfo fi(f);
-        // 去重
         bool dup = false;
-        for (int i = 0; i < playlist->count(); i++) {
-            if (playlist->item(i)->data(Qt::UserRole).toString() == f) {
-                dup = true;
-                break;
+        for (int i = 0; i < m_playlistWidget->count(); i++) {
+            if (m_playlistWidget->item(i)->data(Qt::UserRole).toString() == f) {
+                dup = true; break;
             }
         }
         if (dup) continue;
 
         QListWidgetItem *item = new QListWidgetItem(fi.fileName());
-        item->setData(Qt::UserRole, f);  // 存完整路径
+        item->setData(Qt::UserRole, f);
         item->setToolTip(f);
-        playlist->addItem(item);
+        m_playlistWidget->addItem(item);
     }
+}
+
+// ==================== 解码线程回调 ====================
+void Widget::onAudioReady(QByteArray pcm, int channels, int sampleRate)
+{
+    if (!m_audioNeedsInit) {
+        if (m_audioPlayer) {
+            delete m_audioPlayer;
+            m_audioPlayer = nullptr;
+        }
+        m_audioPlayer = new AudioPlayer(sampleRate, channels);
+        m_audioPlayer->start();
+        m_audioNeedsInit = true;
+    }
+    m_audioPlayer->addPCM(pcm.constData(), pcm.size());
+}
+
+void Widget::onDurationReady(double seconds)
+{
+    m_seekSlider->setRange(0, (int)seconds);
+    m_seekSlider->setValue(0);
+    int min = (int)seconds / 60;
+    int sec = (int)seconds % 60;
+    m_durationLbl->setText(QString("%1:%2").arg(min).arg(sec, 2, 10, QChar('0')));
+    m_playbackTimer->setInterval((int)(16 / m_playbackSpeed));
+    m_playbackTimer->start();
+}
+
+void Widget::onOpenFailed(const QString &msg)
+{
+    QMessageBox::critical(this, "错误", msg, QMessageBox::Cancel);
+    qApp->exit(1);
+}
+
+void Widget::onPlaybackFinished()
+{
+    m_playbackTimer->stop();
+    int ret = QMessageBox::information(this, "提示",
+        "视频已播放完毕，是否重播？", QMessageBox::Yes | QMessageBox::No);
+    if (ret == QMessageBox::Yes) {
+        m_playbackTimer->start();
+        seekTo(0);
+    } else {
+        hide();
+        deleteLater();
+    }
+}
+
+// ==================== Seek ====================
+void Widget::seekTo(int64_t targetUs)
+{
+    if (m_audioPlayer) {
+        m_audioPlayer->stop();
+        m_audioPlayer->start();
+    }
+    m_pendingFrame = QImage();
+    m_pendingPts   = -1;
+    m_worker->pendingSeek = true;
+    m_videoQueue->clear();
+    emit requestSeek(targetUs);
+    m_justSeeked = true;
+}
+
+void Widget::seek()
+{
+    seekTo((int64_t)m_seekSlider->value() * AV_TIME_BASE);
 }
