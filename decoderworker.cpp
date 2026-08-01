@@ -14,11 +14,11 @@ DecoderWorker::~DecoderWorker()
     m_timer->stop();
     av_packet_free(&m_packet);
     av_frame_free(&m_frame);
-    avcodec_free_context(&m_videoCodecCtx);
-    avcodec_free_context(&m_audioCodecCtx);
+    m_videoCodecCtx.reset();
+    m_audioCodecCtx.reset();
     swr_free(&m_swr);
     sws_freeContext(m_sws);
-    avformat_free_context(m_formatCtx);
+    m_formatCtx.reset();
 }
 
 // ==================== 打开文件 ====================
@@ -26,9 +26,9 @@ void DecoderWorker::open(const QString &filepath)
 {
     // 重开时先清理旧的
     if (m_formatCtx) {
-        avformat_close_input(&m_formatCtx);
-        avcodec_free_context(&m_videoCodecCtx);
-        avcodec_free_context(&m_audioCodecCtx);
+        m_formatCtx.reset();
+        m_videoCodecCtx.reset();
+        m_audioCodecCtx.reset();
         m_audioCodecCtx = nullptr;
         m_videoCodecCtx = nullptr;
 
@@ -46,11 +46,13 @@ void DecoderWorker::open(const QString &filepath)
     QByteArray rawPath = filepath.toLocal8Bit();
     const char *cPath  = rawPath.constData();
 
-    if (avformat_open_input(&m_formatCtx, cPath, nullptr, nullptr)) {
+    AVFormatContext *raw=nullptr;
+    if (avformat_open_input(&raw, cPath, nullptr, nullptr)) {
         emit openFailed("文件打开失败");
         return;
     }
-    avformat_find_stream_info(m_formatCtx, nullptr);
+    m_formatCtx.reset(raw);
+    avformat_find_stream_info(m_formatCtx.get(), nullptr);
 
     m_totalDuration = (double)m_formatCtx->duration / AV_TIME_BASE;
     emit durationReady(m_totalDuration);
@@ -63,18 +65,22 @@ void DecoderWorker::open(const QString &filepath)
         if (codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
             m_audioStreamIndex = i;
             const AVCodec *codec = avcodec_find_decoder(codecpar->codec_id);
-            m_audioCodecCtx = avcodec_alloc_context3(codec);
-            avcodec_parameters_to_context(m_audioCodecCtx, codecpar);
-            avcodec_open2(m_audioCodecCtx, codec, nullptr);
+            AVCodecContext *raw=nullptr;
+            raw = avcodec_alloc_context3(codec);
+            avcodec_parameters_to_context(raw, codecpar);
+            avcodec_open2(raw, codec, nullptr);
+            m_videoCodecCtx.reset(raw);
             m_audioSampleRate = m_audioCodecCtx->sample_rate;
         }
 
         if (codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             m_videoStreamIndex = i;
             const AVCodec *codec = avcodec_find_decoder(codecpar->codec_id);
-            m_videoCodecCtx = avcodec_alloc_context3(codec);
-            avcodec_parameters_to_context(m_videoCodecCtx, codecpar);
-            avcodec_open2(m_videoCodecCtx, codec, nullptr);
+            AVCodecContext *raw=nullptr;
+            raw = avcodec_alloc_context3(codec);
+            avcodec_parameters_to_context(raw, codecpar);
+            avcodec_open2(raw, codec, nullptr);
+            m_videoCodecCtx.reset(raw);
 
             frameDelay = (double)stream->avg_frame_rate.den
                        / stream->avg_frame_rate.num * 1000.0;
@@ -110,9 +116,9 @@ void DecoderWorker::seek(int64_t targetUs)
 {
     m_timer->stop();
 
-    av_seek_frame(m_formatCtx, -1, targetUs, AVSEEK_FLAG_BACKWARD);
-    avcodec_flush_buffers(m_videoCodecCtx);
-    avcodec_flush_buffers(m_audioCodecCtx);
+    av_seek_frame(m_formatCtx.get(), -1, targetUs, AVSEEK_FLAG_BACKWARD);
+    m_videoCodecCtx.reset();
+    m_audioCodecCtx.reset();
     m_videoQueue->clear();
     decodeOneVideoFrame();
 
@@ -133,15 +139,15 @@ void DecoderWorker::decodeBatch()
     while (videoFrames < MAX_PER_BATCH) {
         if (pendingSeek) return;
 
-        ret = av_read_frame(m_formatCtx, m_packet);
+        ret = av_read_frame(m_formatCtx.get(), m_packet);
         if (ret < 0) break;
 
         // ---- 视频包 ----
         if (m_packet->stream_index == m_videoStreamIndex) {
-            avcodec_send_packet(m_videoCodecCtx, m_packet);
+            avcodec_send_packet(m_videoCodecCtx.get(), m_packet);
             av_packet_unref(m_packet);
 
-            while (avcodec_receive_frame(m_videoCodecCtx, m_frame) == 0) {
+            while (avcodec_receive_frame(m_videoCodecCtx.get(), m_frame) == 0) {
                 if (!m_swsReady) {
                     m_sws = sws_getContext(
                         m_frame->width, m_frame->height, AV_PIX_FMT_YUV420P,
@@ -170,10 +176,10 @@ void DecoderWorker::decodeBatch()
         }
         // ---- 音频包 ----
         else if (m_packet->stream_index == m_audioStreamIndex) {
-            avcodec_send_packet(m_audioCodecCtx, m_packet);
+            avcodec_send_packet(m_audioCodecCtx.get(), m_packet);
             av_packet_unref(m_packet);
 
-            while (avcodec_receive_frame(m_audioCodecCtx, m_frame) == 0) {
+            while (avcodec_receive_frame(m_audioCodecCtx.get(), m_frame) == 0) {
                 if (!m_swrReady) {
                     m_swr = swr_alloc();
                     av_opt_set_int(m_swr, "in_sample_fmt",  m_frame->format, 0);
@@ -224,12 +230,12 @@ void DecoderWorker::decodeBatch()
 void DecoderWorker::decodeOneVideoFrame()
 {
     av_packet_unref(m_packet);
-    while (av_read_frame(m_formatCtx, m_packet) >= 0) {
+    while (av_read_frame(m_formatCtx.get(), m_packet) >= 0) {
         if (m_packet->stream_index == m_videoStreamIndex) {
-            avcodec_send_packet(m_videoCodecCtx, m_packet);
+            avcodec_send_packet(m_videoCodecCtx.get(), m_packet);
             av_packet_unref(m_packet);
 
-            if (avcodec_receive_frame(m_videoCodecCtx, m_frame) == 0) {
+            if (avcodec_receive_frame(m_videoCodecCtx.get(), m_frame) == 0) {
                 if (!m_swsReady) {
                     m_sws = sws_getContext(
                         m_frame->width, m_frame->height, AV_PIX_FMT_YUV420P,

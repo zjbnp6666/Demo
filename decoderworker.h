@@ -14,7 +14,6 @@ extern "C" {
 #include <libswresample/swresample.h>
 #include <libavutil/opt.h>
 }
-
 class FrameQueue;
 
 class DecoderWorker : public QObject
@@ -47,17 +46,26 @@ private:
     void decodeBatch();
     void decodeOneVideoFrame();     // seek 后解码一帧视频，同步 audioClock
 
-    // ---- FFmpeg ----
-    AVFormatContext *m_formatCtx       = nullptr;
-    AVCodecContext  *m_videoCodecCtx   = nullptr;
-    AVCodecContext  *m_audioCodecCtx   = nullptr;
-    AVPacket        *m_packet          = nullptr;
-    AVFrame         *m_frame           = nullptr;
-    SwrContext      *m_swr             = nullptr;
-    SwsContext      *m_sws             = nullptr;
-    bool             m_swsReady        = false;
-    bool             m_swrReady        = false;
-    AVRational       m_videoTimeBase;
+    // ---- FFmpeg（RAII 智能指针管理） ----
+    static void freeFormatCtx(AVFormatContext *ctx) { if (ctx) avformat_close_input(&ctx); }
+    static void freeCodecCtx(AVCodecContext *c)     { if (c)   avcodec_free_context(&c);  }
+
+    using FmtPtr  = std::unique_ptr<AVFormatContext, void(*)(AVFormatContext*)>;
+    using CdcPtr  = std::unique_ptr<AVCodecContext,  void(*)(AVCodecContext*)>;
+
+    FmtPtr m_formatCtx     {nullptr, freeFormatCtx};
+    CdcPtr m_videoCodecCtx {nullptr, freeCodecCtx};
+    CdcPtr m_audioCodecCtx {nullptr, freeCodecCtx};
+
+    AVPacket   *m_packet   = nullptr;
+    AVFrame    *m_frame    = nullptr;
+    SwrContext *m_swr      = nullptr;
+    SwsContext *m_sws      = nullptr;
+    bool        m_swsReady = false;
+    bool        m_swrReady = false;
+    AVRational  m_videoTimeBase;
+
+
 
     int     m_videoStreamIndex  = -1;
     int     m_audioStreamIndex  = -1;
