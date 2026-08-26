@@ -1,0 +1,16 @@
+# 构建产物
+build/
+build-*/
+
+# Qt Creator
+.qtcreator/
+CMakeLists.txt.user
+*.user
+
+# 编译命令缓存
+compile_commands.json
+
+# 测试/大文件
+*.flv
+*.mp4
+*.wav
