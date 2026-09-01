@@ -69,7 +69,7 @@ void DecoderWorker::open(const QString &filepath)
             raw = avcodec_alloc_context3(codec);
             avcodec_parameters_to_context(raw, codecpar);
             avcodec_open2(raw, codec, nullptr);
-            m_videoCodecCtx.reset(raw);
+            m_audioCodecCtx.reset(raw);
             m_audioSampleRate = m_audioCodecCtx->sample_rate;
         }
 
