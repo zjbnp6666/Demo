@@ -48,50 +48,6 @@ Widget::Widget(QWidget *parent)
 
     for(int i=0; i<3; i++) setupOutput(i);
 }
-void Widget::setupOutput(int i)//上下文创建API
-{
-    AVFormatContext *outCtx=nullptr;
-    QByteArray url = lans[i].url.toUtf8();
-    int retCtx=avformat_alloc_output_context2(&outCtx,nullptr,"flv",url.constData());
-    if(retCtx<0){
-        Logger::instance().error(QString("第:%1 路线路的上下文创建异常了").arg(i));
-        return;
-    }
-
-
-    lans[i].vstream=avformat_new_stream(outCtx,nullptr);
-    if(!lans[i].vstream){
-        Logger::instance().error(QString("第:%1 路线的视频流创建异常").arg(i));
-        return;
-    }
-
-    lans[i].ustream=avformat_new_stream(outCtx,nullptr);
-    if(!lans[i].ustream){
-        Logger::instance().error(QString("第:%1 路线的音频流创建异常").arg(i));
-        return;
-    }
-
-    AVCodecContext *ucodecper=aucodec.get();
-    lans[i].ustream->time_base = aucodec->time_base;
-    int retuStream=avcodec_parameters_from_context(lans[i].ustream->codecpar,ucodecper);
-    if(retuStream<0){
-        Logger::instance().error(QString("第:%1 路线的音频流数据传递异常").arg(i));
-        return;
-    }
-
-    AVPacket *pkt1=av_packet_alloc();
-    if(!pkt1){
-        Logger::instance().error(QString("第:%1 路线的pkt创建异常").arg(i));
-        return;
-    }
-
-    lans[i].pkt.reset(pkt1);
-
-    lans[i].outCtx.reset(outCtx);
-
-    lans[i].outputInited=true;
-}
-
 void Widget::setupAudio()
 {
     const AVCodec* ucodec=avcodec_find_encoder(AV_CODEC_ID_AAC);
@@ -152,10 +108,56 @@ void Widget::setupAudio()
         Logger::instance().error("音频转换器工作失败");
         return;
     }
+
     swr.reset(swr1);
 
     apkt.reset(av_packet_alloc());
+
     audioInited=true;
+}
+
+void Widget::setupOutput(int i)//上下文创建API
+{
+    AVFormatContext *outCtx=nullptr;
+    QByteArray url = lans[i].url.toUtf8();
+    int retCtx=avformat_alloc_output_context2(&outCtx,nullptr,"flv",url.constData());
+    if(retCtx<0){
+        Logger::instance().error(QString("第:%1 路线路的上下文创建异常了").arg(i));
+        return;
+    }
+
+
+    lans[i].vstream=avformat_new_stream(outCtx,nullptr);
+    if(!lans[i].vstream){
+        Logger::instance().error(QString("第:%1 路线的视频流创建异常").arg(i));
+        return;
+    }
+
+    lans[i].ustream=avformat_new_stream(outCtx,nullptr);
+    if(!lans[i].ustream){
+        Logger::instance().error(QString("第:%1 路线的音频流创建异常").arg(i));
+        return;
+    }
+
+    AVCodecContext *ucodecper=aucodec.get();
+    lans[i].ustream->time_base = aucodec->time_base;
+    int retuStream=avcodec_parameters_from_context(lans[i].ustream->codecpar,ucodecper);
+    if(retuStream<0){
+        Logger::instance().error(QString("第:%1 路线的音频流数据传递异常").arg(i));
+        return;
+    }
+
+    AVPacket *pkt1=av_packet_alloc();
+    if(!pkt1){
+        Logger::instance().error(QString("第:%1 路线的pkt创建异常").arg(i));
+        return;
+    }
+
+    lans[i].pkt.reset(pkt1);
+
+    lans[i].outCtx.reset(outCtx);
+
+    lans[i].outputInited=true;
 }
 
 void Widget::initEncoder(int i,int w,int h)
@@ -253,6 +255,7 @@ void Widget::onAuReadAll()
             continue;
         }
         while(avcodec_receive_packet(aucodec.get(), apkt.get()) >= 0){
+            qDebug()<<aPts;
             av_packet_rescale_ts(apkt.get(), aucodec->time_base, {1,1000});
             for(int i=0; i<3; i++){
                 if(!lans[i].headerWitten) continue;// 这路视频头还没写,先不写音频
@@ -300,8 +303,9 @@ void Widget::upVideo(QVideoFrame vframe)
             lans[i].retryArmed = false;// 成功,取消退避
         }
         qint64 now=lans[i].elap.elapsed();
-        if(now-lans[i].lastEncodeMs<1000/lans[i].fps) continue;
-        lans[i].lastEncodeMs=now;
+        if((double)now<lans[i].nextpts) continue;
+
+        if(lans[i].nextpts==0) lans[i].nextpts=now;
 
         int retsws=sws_scale(lans[i].sws.get(), srcData, srcStride, 0, vframe.size().height(),
                                lans[i].frame->data, lans[i].frame->linesize);
@@ -312,6 +316,7 @@ void Widget::upVideo(QVideoFrame vframe)
 
         lans[i].frame->pts=now;
         int retsend=avcodec_send_frame(lans[i].avcodec.get(),lans[i].frame.get());
+        lans[i].nextpts+= 1000.0 / lans[i].fps;
         if(retsend<0&&(retsend!=AVERROR(EAGAIN)&&retsend!=AVERROR_EOF)){
             Logger::instance().error(QString("第:%1 路线的视频包异常").arg(i));
             continue;
@@ -355,7 +360,6 @@ void Widget::resetStream(int i)
     lans[i].frame.reset();                      // 视频 frame
     lans[i].encoderInited = false;              // 复位,下一帧触发 initEncoder 重连
     lans[i].headerWitten  = false;
-    lans[i].lastEncodeMs = 0;                   // 重置抽帧,重连后第一帧立即编码
 
 }
 void Widget::paintEvent(QPaintEvent *event)

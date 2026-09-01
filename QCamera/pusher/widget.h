@@ -69,7 +69,7 @@ struct StreamLane
 
     int frameCounter = 0;
 
-    qint64 lastEncodeMs = 0;
+    double nextpts=0;
 };
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -137,8 +137,6 @@ private:
     std::array<StreamLane,3> lans;
 
     bool audioInited=false;
-
-    qint64 lastEncodeMs=0;
 
     qint64 aPts=0;
 };

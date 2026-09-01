@@ -45,9 +45,9 @@ private:
     std::unique_ptr<QTimer> time;
     std::unique_ptr<VideoWidget> videoWidget;
     std::unique_ptr<Avdeio> deio;
-    void start(QImage image);
-    void streamstart();
-    void setupUI();
+    void start(QImage image);//传画面接口
+    void streamstart();//30ms时钟播放 以及音视频同步API
+    void setupUI();//画UI控件
     void setStystDialog();//设置连接
     void setStop();//暂停功能
 

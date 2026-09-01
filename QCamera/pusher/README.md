@@ -67,12 +67,12 @@ ffplay rtmp://127.0.0.1:1935/live/stream_180p
    `avio_open` 连不上阻塞约 2 秒，断流后每帧重试会卡成白屏。`retryArmed` + 3 秒退避，失败后冷却再试；重连只重置这一路（`resetStream`），不碰共享音频、不连累另两路。
 
 4. **时间是推流最隐蔽的坑**
-   摄像头帧率是「约 30」不是「精确 30」，数帧计数会越漂越远，用 `QElapsedTimer` 真实时钟 + `lastEncodeMs` 抽帧。FLV 时间基固定 `{1,1000}`，编码器时间戳必须先 `av_packet_rescale_ts` 换算，否则视频 1000fps。
+   摄像头回调「约 30fps」≠ 目标帧率（360p 要 25fps），必须自己抽帧。每路维护虚拟时钟 `nextpts`：编一帧 `nextpts += 1000.0/fps`，当前帧 `now >= nextpts` 才编码。不能用「距上次编码时刻」判断——30fps 采集配 40ms 阈值会退化成 66.67ms 一帧（15fps），目标帧率永远到不了。FLV 时间基固定 `{1,1000}`，编码器时间戳必须先 `av_packet_rescale_ts` 换算，否则视频 1000fps。
 
 ## 踩坑记录
 
 - `max_b_frames` 设 0，直播禁 B 帧（负 dts）
-- AAC priming，首包 pts=-1024，`aPts` 初始 +1024 补偿
+- AAC priming：FFmpeg 8.0.1 native AAC 首包 pts=2048（encoder delay 2048 采样），无负 pts，`aPts` 从 0 即可。仅旧版本编码器会吐负包，才需 `aPts` 初始 +1024 补偿
 - `av_packet_clone` 克隆音频包（`av_packet_init` 不存在，`av_packet_ref` 要预 init）
 - 写头必须等第一帧 `receive_packet` 之后（codecpar 的 SPS/PPS 那时才就绪）
 - QAudioSource `readyRead` 必须先 `readAll` 读空，否则缓冲满信号不再触发

@@ -111,7 +111,7 @@ void Widget::setupUI()
     grid->addWidget(btnSyst.get(), 0, 0, Qt::AlignTop | Qt::AlignRight);
     grid->addWidget(btnPause.get(), 0, 0, Qt::AlignBottom | Qt::AlignLeft);
 
-    // 清晰度切换按钮：浮在视频左上角
+    //清晰度切换按钮：浮在视频左上角
     auto styleQuality = [](QToolButton *b){
         b->setCursor(Qt::PointingHandCursor);
         b->setFocusPolicy(Qt::NoFocus);
@@ -321,7 +321,7 @@ void Widget::toggleFullScreen()
     }
 }
 
-void Widget::setRenderMode(int id)
+void Widget::setRenderMode(int id)//切换画面格式
 {
     switch(id){
     case 0: videoWidget->setStrategy(std::make_unique<KeepAspectStrategy>()); break;
@@ -330,7 +330,7 @@ void Widget::setRenderMode(int id)
     }
 }
 
-void Widget::connectDeio()
+void Widget::connectDeio()//画面卡住 混在连接失败
 {
     connect(deio.get(),&Avdeio::connectFail,this,[this](){
         QMessageBox::warning(this,"提示","连接失败 正在重连");
@@ -341,7 +341,7 @@ void Widget::connectDeio()
     });
 }
 
-void Widget::switchStream(const QString &newUrl)
+void Widget::switchStream(const QString &newUrl)//切换流
 {
     if(newUrl == url) return;
     url = newUrl;
