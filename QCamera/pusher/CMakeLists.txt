@@ -18,6 +18,9 @@ qt_add_executable(QCamera
     camera.h camera.cpp
     audioformat.h audioformat.cpp
     logger.h logger.cpp
+    av.h av.cpp
+    framequeue.h framequeue.cpp
+    streamlane.h streamlane.cpp
 )
 
 target_link_libraries(QCamera
