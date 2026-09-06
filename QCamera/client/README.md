@@ -63,10 +63,15 @@ RTMP 流 ─→ 解封装 ─┬─→ 视频解码 ─→ sws(YUV→RGB) ─→
 4. **断线重连的「最后一公里」**
    `rw_timeout` 设 3 秒（否则断流后 `av_read_frame` 卡 socket 几十秒）；重连用 `avformat_close_input` 关 socket（`free_context` 只清内存，连接还挂着）；断流后消费者阻塞 pop 卡死主线程，pop 前先 isEmpty 判空。
 
+5. **复用缓冲：把「每帧 malloc/free」降成「一次分配」**
+   视频 YUV→RGB 后要构造 `QImage` 入队。旧实现每解一帧就 `malloc(rgbSize)`、用完 `free`，30fps 下每秒 30 次堆分配，宽幅更伤。改为成员变量 `m_rgbBuff`，只在**重建（`!newWin`/分辨率变化）时 `resize` 一次**，之后 `sws_scale` 直接写入复用。
+   - **为什么还要 `image.copy()`？** `QImage` 只是**借用** `m_rgbBuff` 的裸内存，并不拥有。而 `m_rgbBuff` **下一帧就会被复用覆盖**，且队列**跨线程、跨帧**——不 copy，队列里的图等下一帧写进就全被冲掉。所以必须深拷贝出独立副本。
+   - 这一下 `copy` 是**"保安全"的代价**：省掉了 malloc，仍每次全图 memcpy（1080p 一帧 ~6MB）。想彻底省它得让队列元素自己拥有 buffer / 引用计数，跨线程改生命周期风险大，现阶段别去动。
+
 ## 踩坑记录
 
 - 阻塞 pop 死锁——断流后消费者阻塞 pop 卡死主线程，pop 前先 isEmpty 判空
-- QImage 裸指针构造必须 copy() 再 free（引用不拥有内存）
+- 复用缓冲 `QImage` 借用成员缓冲必须 `copy()` 再入队——借的是会被复用覆盖的地址，跨线程跨帧，不 copy 图会被下一帧冲掉
 - sws_getContext 要等首帧成功后建（那时才有宽高）
 - 音频包 unref + return，别送视频解码器
 
