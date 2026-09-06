@@ -72,6 +72,10 @@ private:
     using Pkt = std::unique_ptr<AVPacket, void(*)(AVPacket*)>;
     Pkt pkt{nullptr, freePkt};
 
+    std::vector<uint8_t> m_rgbBuff;
+
+    int rgbStride=0;//每行像素字节数
+
     int AVDEOIDX=-1;
     int AUDEOIDX=-1;
     AVRational  m_videoTimeBase;

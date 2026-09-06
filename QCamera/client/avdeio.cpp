@@ -55,21 +55,21 @@ void Avdeio::run()
                                                        frame->width,frame->height,AV_PIX_FMT_RGB24,SWS_BILINEAR,nullptr,nullptr,nullptr);
                         sws.reset(s);
                         swsnew=true;
+                        m_rgbBuff.resize((size_t)frame->width*frame->height*3);
+                        rgbStride = frame->width * 3;
                     }
-                    int rgbStride = frame->width * 3;
-                    int rgbSize   = frame->height * rgbStride;
-                    uint8_t *rgbBuf = (uint8_t *)malloc(rgbSize);
 
+                    uint8_t *rgbData=m_rgbBuff.data();
                     // 5.3 YUV → RGB
                     sws_scale(sws.get(), frame->data, frame->linesize, 0, frame->height,
-                              &rgbBuf, &rgbStride);
-                    QImage image(rgbBuf,frame->width,frame->height,QImage::Format_RGB888);
+                              &rgbData, &rgbStride);
+                    QImage image(m_rgbBuff.data(),frame->width,frame->height,QImage::Format_RGB888);
 
                     FrameData data;
                     data.pts_us = frame->pts * av_q2d(m_videoTimeBase) * 1000000.0;
                     data.image  = image.copy();
                     m_Queue->push(std::move(data));
-                    free(rgbBuf);
+
                 }
             }
             else if(pkt->stream_index==AUDEOIDX)

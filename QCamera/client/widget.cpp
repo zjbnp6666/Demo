@@ -280,7 +280,7 @@ void Widget::streamstart()
     }
     if(deio->m_Queue->isEmpty()) return;
     FrameData data=deio->popFrame();
-    qDebug() << "video pts:" << data.pts_us << "clock:" << audioClock;
+    //qDebug() << "video pts:" << data.pts_us << "clock:" << audioClock;
     if(data.pts_us<audioClock-100000) return;
     if(data.pts_us>audioClock+3000)
     {
