@@ -12,6 +12,10 @@
 - 画面缩放三策略（等比 / 拉伸 / 裁剪）
 - 暂停 / 全屏
 
+## 界面预览
+
+![QCamera-Client 界面示意](screenshots/client-ui.png)
+
 ## 技术栈
 
 - Qt 6（Widgets / Multimedia）
@@ -55,7 +59,7 @@ RTMP 流 ─→ 解封装 ─┬─→ 视频解码 ─→ sws(YUV→RGB) ─→
    最容易犯的错：拿最新解码帧的 pts 当时钟。但帧「到达」≠「已播放」，用到达时间当时钟会把时钟拨快，视频永远晚到被丢。用 `QAudioSink::processedUSecs`（声卡真实播到哪）当时钟，视频 pts 跟播放位置比才对得上。
 
 2. **换流要「重锁时钟基准」**
-   切清晰度/断线重连后，视频 pts 和播放位置都从头开始，旧基准会让视频 pts 超前、每帧都走缓存、帧率减半像慢放。换流时 `clockBasePts`/`procBase` 置 0 重新锁定。
+   切清晰度/断线重连后，视频 pts 和播放位置都从头开始，旧基准会让视频 pts 超前、每帧都走缓存、帧率减半像慢放。换流时 `clockBasePts`/`procBace` 置 0 重新锁定。
 
 3. **策略模式做画面缩放——开闭原则**
    等比/拉伸/裁剪三种缩放抽象成 `Renderstrategy` 基类 + 三个子类，VideoWidget 只认基类。加新缩放方式不改旧代码。
@@ -63,12 +67,23 @@ RTMP 流 ─→ 解封装 ─┬─→ 视频解码 ─→ sws(YUV→RGB) ─→
 4. **断线重连的「最后一公里」**
    `rw_timeout` 设 3 秒（否则断流后 `av_read_frame` 卡 socket 几十秒）；重连用 `avformat_close_input` 关 socket（`free_context` 只清内存，连接还挂着）；断流后消费者阻塞 pop 卡死主线程，pop 前先 isEmpty 判空。
 
+5. **生产者-消费者：单解码线程 + 双定时器**
+   `Avdeio` 一个线程干完「拉流→解封装→音视频双路解码→入两队列」；主线程一个 30ms 定时器取视频帧上屏、一个 10ms 定时器取音频喂声卡。改解码器/参数只动 `Avdeio` 一处，队列用 QMutex + QWaitCondition 保线程安全。
+
+6. **三态同步：落后丢帧 / 超前缓存 / 临界上屏**
+   `streamstart()` 对视频帧分三档：`pts<audioClock-100000` → 丢帧（越拉越远）；`pts>audioClock+3000` → 存 pending 等下一周期（领先太多就等）；临界 → 直接上屏。音频未就绪的 `headpst` 期则丢视频帧防队列积压堵死解码线程——不搞一刀切，量不同程度分而治之。
+
 ## 踩坑记录
 
-- 阻塞 pop 死锁——断流后消费者阻塞 pop 卡死主线程，pop 前先 isEmpty 判空
+- 阻塞 pop 死锁——断流后消费者阻塞 pop 卡死主线程（界面假死），pop 前先 isEmpty 判空
 - QImage 裸指针构造必须 copy() 再 free（引用不拥有内存）
 - sws_getContext 要等首帧成功后建（那时才有宽高）
 - 音频包 unref + return，别送视频解码器
+- `rw_timeout` 不设 → 断流后 `av_read_frame` 卡死 socket 几十秒，画面定格还不重连，设 3s 才触发自动重连
+- 切流/断线重连不清零时钟基准 → 视频 pts 领先播放位置，每帧都走缓存，帧率减半像慢放
+- **排查别靠感觉猜**：我连猜错三次（open_input→等关键帧→find_stream_info），又误报「音频快 274ms」——其实是跨轮减时间戳翻车。要逐环节埋点、同一次运行内对比（见秒开章节）
+- **「写入声卡 ≠ 已播放」**：用 `processedUSecs` 当主时钟，别拿最新解码帧的 pts
+- 切清晰度要 `deio.reset()` + 重建线程，否则旧线程还连着旧 URL
 
 ## 待优化
 
