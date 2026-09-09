@@ -5,7 +5,6 @@ Widget::Widget(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Widget)
 {
-    qDebug()<<"UI启动";
     ui->setupUi(this);
     setupUI();
 
@@ -36,6 +35,7 @@ Widget::Widget(QWidget *parent)
         while(!deio->m_Queue->isEmpty1()&&au->byteFree()>4096){
             AudioData data=deio->m_Queue->pop1();
             au->addPcm(data.data.constData(),data.data.size());
+
             if(clockBasePts==0)
             {
                 clockBasePts=data.pts_us;
@@ -53,6 +53,7 @@ Widget::Widget(QWidget *parent)
     });
     deio->start();
     updateLoading();
+    t.start();
 }
 
 Widget::~Widget()
@@ -343,6 +344,8 @@ void Widget::connectDeio()//画面卡住 混在连接失败
 
 void Widget::switchStream(const QString &newUrl)//切换流
 {
+    t.restart();
+    tstart=true;
     if(newUrl == url) return;
     url = newUrl;
     Urlname->setText(url);

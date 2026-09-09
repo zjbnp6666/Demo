@@ -26,6 +26,7 @@
 #include <QProgressBar>
 #include<QSlider>
 #include<QDebug>
+#include<QElapsedTimer>
 QT_BEGIN_NAMESPACE
 namespace Ui {
 class Widget;
@@ -92,5 +93,8 @@ private:
     std::unique_ptr<QToolButton> btnSD;
     std::unique_ptr<QToolButton> btnLD;
     QDialog dialogSyst;//设置弹窗
+
+    QElapsedTimer t;
+    bool tstart=false;
 };
 #endif // WIDGET_H
