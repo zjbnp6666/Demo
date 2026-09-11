@@ -77,7 +77,7 @@ void AV::run()
     while(!isInterruptionRequested())
     {
         Nv12Frame frame=vqueue.pop();
-        if(frame.width==0) {Logger::instance().error("数值异常 摄像头传值widget==0");break;}
+        if(frame.width==0) {Logger::instance().error("数值异常 摄像头传值widget==0");continue;}
         for(int i=0;i<3;i++)
         {
 
@@ -110,12 +110,18 @@ void AV::run()
 
             lans[i].frame->pts=now;
             int retsend=avcodec_send_frame(lans[i].avcodec.get(),lans[i].frame.get());
+            if(i==0) qDebug()<<"720p send_frame="<<retsend<<" now="<<now<<" nextpts="<<lans[i].nextpts;
             lans[i].nextpts+= 1000.0 / lans[i].fps;
             if(retsend<0&&(retsend!=AVERROR(EAGAIN)&&retsend!=AVERROR_EOF)){
                 Logger::instance().error(QString("第:%1 路线的视频包异常").arg(i));
                 continue;
             }
+            //int npkt=0;
             while(avcodec_receive_packet(lans[i].avcodec.get(), lans[i].pkt.get()) == 0){
+                // npkt++;
+                // if(i==0) qDebug()<<"720p 收包 key="<<((lans[i].pkt->flags&AV_PKT_FLAG_KEY)!=0)
+                //                   <<" pts="<<lans[i].pkt->pts
+                //                   <<" size="<<lans[i].pkt->size;
                 if(!lans[i].headerWitten){
                     int retfrom=avcodec_parameters_from_context(lans[i].vstream->codecpar,
                                                                   lans[i].avcodec.get());
@@ -137,11 +143,14 @@ void AV::run()
                 int writeframe=av_interleaved_write_frame(lans[i].outCtx.get(), lans[i].pkt.get());
                 av_packet_unref(lans[i].pkt.get());
                 if(writeframe<0){
-                    Logger::instance().error(QString("第:%1 路线的视频写入异常 尝试重新连接").arg(i));
+                    char errbuf[256];
+                    av_strerror(writeframe, errbuf, sizeof(errbuf));
+                    Logger::instance().error(QString("第:%1 路线的视频写入异常:%2 (%3) 尝试重新连接").arg(i).arg(errbuf).arg(writeframe));
                     resetStream(i);
                     break;
                 }
             }
+            //if(i==0 && npkt==0) qDebug()<<"720p 本帧receive无包";
         }
         drainAudio();
     }
@@ -185,10 +194,12 @@ void AV::initEncoder(int i, int w, int h)
     vcodecs->pix_fmt=AV_PIX_FMT_YUV420P;
     vcodecs->bit_rate=lans[i].bitrate;
     vcodecs->time_base={1,1000};
-    vcodecs->framerate={lans[i].fps,1};
+    vcodecs->framerate={10,1};
     vcodecs->max_b_frames=0;
-    vcodecs->gop_size=lans[i].fps;
+    vcodecs->gop_size=10;//为什么采用硬编码 因为我摄像头看似30fps 其实只有10 因此想秒开快就设置5/10 0.5秒一帧关键帧
 
+    av_opt_set(vcodecs->priv_data, "scenecut", "0", 0);
+    av_opt_set(vcodecs->priv_data, "rc-lookahead", "0", 0);
     lans[i].avcodec.reset(vcodecs);
 
     int retopen=avcodec_open2(lans[i].avcodec.get(),vcodec,nullptr);
@@ -284,14 +295,15 @@ void AV::resetStream(int i)
     lans[i].outCtx.reset();//必须调用avforamt_free_context析构 不然即使重连 也会导致连接旧的上下文
     lans[i].vstream=nullptr;
     lans[i].ustream=nullptr;
-    lans[i].avcodec.reset();                    // 视频编码器
-    lans[i].sws.reset();                        // 缩放器
-    lans[i].frame.reset();                      // 视频 frame
-    lans[i].encoderInited = false;              // 复位,下一帧触发 initEncoder 重连
+    lans[i].avcodec.reset();
+    lans[i].sws.reset();
+    lans[i].frame.reset();
+    lans[i].encoderInited = false;
     lans[i].headerWitten  = false;
     lans[i].outputInited=false;
     lans[i].nextpts=0;
-    lans[i].elap.restart();
+    //lans[i].elap.restart(); 不重置视频墙钟 防止和音频的pts初始位置存在问题 因为音频pts不能动
+    //aPts=0;  为什么不能动 因为resetStream(i条流) 重置aPts公用参数 导致其他流也会坏
 }
 
 void AV::drainAudio()

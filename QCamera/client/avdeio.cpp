@@ -26,6 +26,7 @@ void Avdeio::run()
         }
         while(!isInterruptionRequested()){
             int ret=av_read_frame(outCtx.get(),pkt.get());
+            m_lastReadMs=nowMs();
             if(ret<0)
             {
                 char errbuf[AV_ERROR_MAX_STRING_SIZE] = {0};
@@ -128,11 +129,13 @@ FrameData Avdeio::popFrame()
 
 bool Avdeio::init()
 {
+    m_lastReadMs = nowMs();   // 每次连接前刷新，避免 callback 因"上次连接留下的过期值"锁死 open
     if(!newWin){
-        AVFormatContext *ctx = nullptr;
+        AVFormatContext *ctx = avformat_alloc_context();
+        ctx->interrupt_callback={interruptCb,this};
         QByteArray urlBytes = m_url.toUtf8();
         AVDictionary *opts = nullptr;
-        //av_dict_set(&opts, "rw_timeout", "3000000", 0);   // 3 秒（微秒
+        av_dict_set(&opts, "rw_timeout", "3000000", 0);   // 3 秒（微秒
         av_dict_set(&opts, "probesize", "1024", 0);        // 探测字节压到最小 → 不缓冲等探测
         av_dict_set(&opts, "analyzeduration", "100000", 0); // 探测时长压到 50ms
         //av_dict_set(&opts, "fflags", "nobuffer", 0);       // 关 avformat 输入缓冲，读一帧推一帧
@@ -225,6 +228,25 @@ void Avdeio::cleanup()
     swsnew=false;
     swrnew=false;
     t.restart();
+}
+
+int Avdeio::interruptCb(void *opaque)
+{
+
+    auto *self=static_cast<Avdeio*>(opaque);
+    if(self->isInterruptionRequested()) return 1;
+    qint64 now=self->nowMs();
+    if(self->m_lastReadMs&&now -self->m_lastReadMs>3000) return 1;
+    return 0;
+
+}
+
+qint64 Avdeio::nowMs()
+{
+    if(t.isValid()){
+        return t.elapsed();
+    }
+    return 0;
 }
 
 Avdeio::~Avdeio()

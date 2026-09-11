@@ -50,5 +50,8 @@ private:
     void onAuReadAll();
 
     AV *worker=nullptr;
+
+    QElapsedTimer t;
+    int i=0;
 };
 #endif // WIDGET_H

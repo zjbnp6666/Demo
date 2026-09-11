@@ -6,6 +6,8 @@
 #include<QVideoSink>
 #include<QMediaCaptureSession>
 #include<memory.h>
+#include<QCameraFormat>
+#include<QDebug>
 class Camera : public QObject
 {
     Q_OBJECT

@@ -12,6 +12,7 @@ extern "C"{
 #include<libswresample/swresample.h>
 #include<libavformat/avformat.h>
 #include<libavutil/opt.h>
+#include<libavutil/error.h>
 }
 class AV : public QThread
 {

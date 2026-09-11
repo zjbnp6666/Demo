@@ -89,9 +89,13 @@ private:
 
     void  cleanup();// 释放解码器/转换器/上下文
 
-    const QString DEFAULT_URL = "rtmp://127.0.0.1:1935/live/stream";
+    const QString DEFAULT_URL = "rtmp://127.0.0.1:1935/live/stream_720p";
 
     QElapsedTimer t;
+    std::atomic<qint64> m_lastReadMs{0};
+
+    static int interruptCb(void *opaque);
+    qint64 nowMs();
 signals:
     void connectFail();//连不上发送信号
     void reconnecting();//断流了

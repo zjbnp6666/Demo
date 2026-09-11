@@ -16,17 +16,11 @@ Widget::Widget(QWidget *parent)
         connect(au->io, &QIODevice::readyRead, this, &Widget::onAuReadAll);
     }
 
-    setupAudio();
-
     worker=new AV;
     connect(worker,&QThread::finished,worker,&QObject::deleteLater);
     worker->start();
+    t.start();
 }
-void Widget::setupAudio()
-{
-
-}
-
 void Widget::onAuReadAll()
 {
     QByteArray b=au->io->readAll();
@@ -38,10 +32,13 @@ void Widget::upVideo(QVideoFrame vframe)
 {
     if(!vframe.isValid()) return;
     vframe.map(QVideoFrame::ReadOnly);
+    qDebug()<<"第"<<i<<"fps:"<<t.elapsed();
 
+    i++;
     const uchar* srcData[2]={vframe.bits(0),vframe.bits(1)};
     int srcStride[2]={vframe.bytesPerLine(0),vframe.bytesPerLine(1)};
-
+    // qDebug() << "fmt=" << int(vframe.surfaceFormat().pixelFormat())
+    //          << "size=" << vframe.size();
     Nv12Frame f;
     f.width = vframe.size().width();
     f.height = vframe.size().height();
