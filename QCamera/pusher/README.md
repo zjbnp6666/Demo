@@ -89,6 +89,7 @@ ffplay rtmp://127.0.0.1:1935/live/stream_180p
 - `av_packet_clone` 克隆音频包（`av_packet_init` 不存在，`av_packet_ref` 要预 init）
 - 写头必须等第一帧 `receive_packet` 之后（codecpar 的 SPS/PPS 那时才就绪）
 - QAudioSource `readyRead` 必须先 `readAll` 读空，否则缓冲满信号不再触发
+- **重连时别重置视频时钟（09-11）**：`elap` 一人两职——抽帧参照 **和** 视频 pts（`frame->pts=now`）。`elap.restart()` 会把**视频 pts 归零**；而音频 `aPts` **不能**归零（`aucodec` 全局三路共享、从不重建，归零会波及未重连的两路 + 音频时间戳回退）→ 音视频**零点错开**，拉流端黑屏/有声无画。**正解：删掉 `elap.restart()`（视频 pts 保持连续），保留 `nextpts=0`（重锚哨兵：下一帧 `if(nextpts==0) nextpts=now`，且保证重连首帧必编）。音频 `aPts` 一个字别动。**
 
 ## 待优化
 
