@@ -1,15 +1,18 @@
 #include "avdeio.h"
 #include<QDebug>
 #include<QByteArray>
+
 Avdeio::Avdeio(const QString &url, QObject *parent)
     : QThread{parent}
 {
     m_Queue=new FrameQueue;
     m_url=url;
+    t.start();
 }
 
 void Avdeio::run()
 {
+
     while(!isInterruptionRequested()){
         if(!init()){
             emit connectFail();
@@ -129,7 +132,10 @@ bool Avdeio::init()
         AVFormatContext *ctx = nullptr;
         QByteArray urlBytes = m_url.toUtf8();
         AVDictionary *opts = nullptr;
-        av_dict_set(&opts, "rw_timeout", "3000000", 0);   // 3 秒（微秒
+        //av_dict_set(&opts, "rw_timeout", "3000000", 0);   // 3 秒（微秒
+        av_dict_set(&opts, "probesize", "1024", 0);        // 探测字节压到最小 → 不缓冲等探测
+        av_dict_set(&opts, "analyzeduration", "100000", 0); // 探测时长压到 50ms
+        //av_dict_set(&opts, "fflags", "nobuffer", 0);       // 关 avformat 输入缓冲，读一帧推一帧
         int temp=avformat_open_input(&ctx, urlBytes.constData(), nullptr, &opts);
         av_dict_free(&opts);
         char errbuf[AV_ERROR_MAX_STRING_SIZE] = {0};
@@ -218,6 +224,7 @@ void Avdeio::cleanup()
     newWin=false;
     swsnew=false;
     swrnew=false;
+    t.restart();
 }
 
 Avdeio::~Avdeio()

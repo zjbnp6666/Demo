@@ -14,6 +14,7 @@ extern "C"{
 #include<QImage>
 #include"tqueue.h"
 #include"logger.h"
+#include<QElapsedTimer>
 class Avdeio : public QThread
 {
     Q_OBJECT
@@ -89,6 +90,8 @@ private:
     void  cleanup();// 释放解码器/转换器/上下文
 
     const QString DEFAULT_URL = "rtmp://127.0.0.1:1935/live/stream";
+
+    QElapsedTimer t;
 signals:
     void connectFail();//连不上发送信号
     void reconnecting();//断流了

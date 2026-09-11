@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 680" width="1080" height="680">
+  <defs>
+    <linearGradient id="winBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10131d"/>
+      <stop offset="1" stop-color="#0a0c12"/>
+    </linearGradient>
+    <linearGradient id="videoBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#111523"/>
+      <stop offset="0.55" stop-color="#0b0e17"/>
+      <stop offset="1" stop-color="#06070c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.55">
+      <stop offset="0" stop-color="#24304a" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#24304a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4fc3f7"/>
+      <stop offset="1" stop-color="#38a7e0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 窗口底 -->
+  <rect x="0" y="0" width="1080" height="680" rx="10" fill="url(#winBg)" stroke="#2a3142" stroke-width="1"/>
+
+  <!-- 标题栏 -->
+  <rect x="0" y="0" width="1080" height="40" fill="#161a28"/>
+  <circle cx="18" cy="20" r="5" fill="#4fc3f7"/>
+  <text x="32" y="26" font-family="'Segoe UI',sans-serif" font-size="15" fill="#cdd3e0" font-weight="600">QCamera-Client · RTMP 拉流播放器</text>
+  <text x="1000" y="25" font-family="'Segoe UI',sans-serif" font-size="14" fill="#8a93a6" text-anchor="middle">&#8212;</text>
+  <rect x="1024" y="9" width="12" height="12" fill="none" stroke="#8a93a6" stroke-width="1.5"/>
+  <text x="1058" y="26" font-family="'Segoe UI',sans-serif" font-size="15" fill="#8a93a6" text-anchor="middle">&#10005;</text>
+
+  <!-- 视频区 -->
+  <rect x="0" y="40" width="1080" height="580" fill="url(#videoBg)"/>
+  <rect x="0" y="40" width="1080" height="580" fill="url(#glow)"/>
+  <!-- 淡斜光，模拟画面动感但不喧宾夺主 -->
+  <polygon points="640,40 1080,40 1080,180 760,40" fill="#2b3a5c" opacity="0.12"/>
+
+  <!-- 左上：清晰度三档 -->
+  <rect x="18" y="58" width="70" height="30" rx="15" fill="url(#accent)"/>
+  <text x="53" y="79" font-family="'Segoe UI',sans-serif" font-size="14" fill="#0b0e17" text-anchor="middle" font-weight="600">高清</text>
+  <rect x="96" y="58" width="70" height="30" rx="15" fill="rgba(0,0,0,0.45)"/>
+  <text x="131" y="79" font-family="'Segoe UI',sans-serif" font-size="14" fill="#e6e9f0" text-anchor="middle">标清</text>
+  <rect x="174" y="58" width="70" height="30" rx="15" fill="rgba(0,0,0,0.45)"/>
+  <text x="209" y="79" font-family="'Segoe UI',sans-serif" font-size="14" fill="#e6e9f0" text-anchor="middle">流畅</text>
+
+  <!-- 右上：齿轮 -->
+  <circle cx="1050" cy="73" r="17" fill="rgba(0,0,0,0.55)"/>
+  <text x="1050" y="80" font-family="'Segoe UI',sans-serif" font-size="18" fill="#e6e9f0" text-anchor="middle">&#9881;</text>
+
+  <!-- 中央：加载条（busy 态） -->
+  <rect x="330" y="300" width="420" height="14" rx="7" fill="rgba(255,255,255,0.08)"/>
+  <rect x="392" y="300" width="130" height="14" rx="7" fill="url(#accent)"/>
+
+  <!-- 左下：播放暂停按钮 -->
+  <circle cx="38" cy="572" r="19" fill="rgba(0,0,0,0.5)"/>
+  <polygon points="32,563 32,581 48,572" fill="#e6e9f0"/>
+
+  <!-- 右下：音量 -->
+  <text x="975" y="578" font-family="'Segoe UI',sans-serif" font-size="17" fill="#e6e9f0" text-anchor="middle">&#128266;</text>
+  <rect x="996" y="569" width="66" height="6" rx="3" fill="rgba(255,255,255,0.15)"/>
+  <rect x="996" y="569" width="46" height="6" rx="3" fill="url(#accent)"/>
+  <circle cx="1045" cy="572" r="5" fill="#e6e9f0"/>
+
+  <!-- 底部：地址栏 -->
+  <rect x="0" y="620" width="1080" height="60" fill="#0a0d14" stroke="#1c2230" stroke-width="1"/>
+  <rect x="18" y="636" width="840" height="30" rx="6" fill="#10141f" stroke="#2a3142" stroke-width="1"/>
+  <text x="30" y="656" font-family="'Courier New',monospace" font-size="14" fill="#7f97b8">rtmp://127.0.0.1:1935/live/stream_720p</text>
+  <rect x="866" y="636" width="94" height="30" rx="6" fill="url(#accent)"/>
+  <text x="913" y="656" font-family="'Segoe UI',sans-serif" font-size="14" fill="#0b0e17" text-anchor="middle" font-weight="600">连接</text>
+</svg>
