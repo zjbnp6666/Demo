@@ -192,6 +192,7 @@ void AV::initEncoder(int i, int w, int h)
     vcodecs->width=lans[i].w;
     vcodecs->height=lans[i].h;
     vcodecs->pix_fmt=AV_PIX_FMT_YUV420P;
+
     vcodecs->bit_rate=lans[i].bitrate;
     vcodecs->rc_max_rate=lans[i].bitrate;        // CBR：上限 = 平均
     vcodecs->rc_min_rate=lans[i].bitrate;        // CBR：下限 = 平均

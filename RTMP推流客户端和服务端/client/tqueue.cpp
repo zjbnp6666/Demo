@@ -4,7 +4,10 @@ void FrameQueue::push(const FrameData &frame)
 {
     QMutexLocker locker(&mutex);
     while (queue.size() >= MAX_SIZE)
+    {
+        ++m_dropFullVideo;      // 队列满：丢掉这一帧，一声不响
         return;
+    }
 
     queue.append(frame);
     notEmpty.wakeOne();
@@ -15,6 +18,7 @@ void FrameQueue::push(FrameData &&frame)
     QMutexLocker locker(&mutex);
     while(queue.size()>=MAX_SIZE)
     {
+        ++m_dropFullVideo;
         return;
     }
     queue.append(std::move(frame));
@@ -59,7 +63,10 @@ void FrameQueue::push1(const AudioData &frame)
 {
     QMutexLocker locker(&amutex);
     while (queue1.size() >= 10)
+    {
+        ++m_dropFullAudio;
         return;
+    }
 
     queue1.append(frame);
     anotEmpty.wakeOne();
@@ -70,6 +77,7 @@ void FrameQueue::push1(AudioData &&frame)
     QMutexLocker locker(&amutex);
     while(queue1.size()>=10)
     {
+        ++m_dropFullAudio;
         return;
     }
     queue1.append(std::move(frame));
@@ -109,4 +117,14 @@ void FrameQueue::setDone1()
     QMutexLocker locker(&amutex);
     m_adone = true;
     anotEmpty.wakeAll();              // 唤醒 pop()，让其返回空帧
+}
+
+int FrameQueue::takeDropFullVideo()
+{
+    return m_dropFullVideo.exchange(0);
+}
+
+int FrameQueue::takeDropFullAudio()
+{
+    return m_dropFullAudio.exchange(0);
 }

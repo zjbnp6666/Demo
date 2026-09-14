@@ -16,6 +16,22 @@ Widget::Widget(QWidget *parent)
     time->start();
     utime->start();
 
+    //诊断：每秒打一条，跑一次弱网测试用（测完可删）
+    statTime=std::make_unique<QTimer>(this);
+    statTime->setInterval(1000);
+    connect(statTime.get(),&QTimer::timeout,this,[this](){
+        if(!deio) return;
+        qDebug().nospace()<<"[1s] 收包="<<deio->takeReadCount()
+                          <<" 最大断供="<<deio->takeMaxGapMs()<<"ms"
+                          <<" 上屏="<<m_shown
+                          <<" 迟到丢="<<m_dropLate
+                          <<" 队列满丢(视/音)="<<deio->m_Queue->takeDropFullVideo()
+                          <<"/"<<deio->m_Queue->takeDropFullAudio();
+        m_shown=0;
+        m_dropLate=0;
+    });
+    statTime->start();
+
     deio=std::make_unique<Avdeio>(url,this);
     au = std::make_unique<AudioSinke>(this);
     au->strat();   // 不调这行，sink 也是 nullptr
@@ -67,6 +83,7 @@ Widget::~Widget()
 void Widget::start(QImage image)
 {
     if(image.isNull()) return;
+    ++m_shown;
     videoWidget->setFrame(image);
 }
 
@@ -270,6 +287,7 @@ void Widget::streamstart()
     {
         if(q.pts_us<audioClock-100000)//缓存帧是否过慢了
         {
+            ++m_dropLate;
             q=FrameData();
             images=false;
             return;
@@ -282,7 +300,7 @@ void Widget::streamstart()
     if(deio->m_Queue->isEmpty()) return;
     FrameData data=deio->popFrame();
     //qDebug() << "video pts:" << data.pts_us << "clock:" << audioClock;
-    if(data.pts_us<audioClock-100000) return;
+    if(data.pts_us<audioClock-100000){ ++m_dropLate; return; }
     if(data.pts_us>audioClock+3000)
     {
         q=data;

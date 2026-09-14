@@ -5,6 +5,7 @@
 #include <QWaitCondition>
 #include <QList>
 #include <QImage>
+#include <atomic>
 
 struct FrameData {
     QImage   image;
@@ -32,6 +33,9 @@ public:
     bool isEmpty1();
     void setDone1();        // EOF 标记，唤醒 pop()
 
+    int takeDropFullVideo();   // 取走并清零 视频队列满丢弃 计数
+    int takeDropFullAudio();   // 取走并清零 音频队列满丢弃 计数
+
 private:
     QMutex mutex;
     QWaitCondition notEmpty;
@@ -39,6 +43,8 @@ private:
     QList<FrameData> queue;
     static const int MAX_SIZE = 5;
     bool m_done = false;
+    std::atomic<int> m_dropFullVideo{0};
+    std::atomic<int> m_dropFullAudio{0};
 
     QMutex amutex;
     QWaitCondition anotEmpty;
