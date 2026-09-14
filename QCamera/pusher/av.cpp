@@ -193,6 +193,9 @@ void AV::initEncoder(int i, int w, int h)
     vcodecs->height=lans[i].h;
     vcodecs->pix_fmt=AV_PIX_FMT_YUV420P;
     vcodecs->bit_rate=lans[i].bitrate;
+    vcodecs->rc_max_rate=lans[i].bitrate;        // CBR：上限 = 平均
+    vcodecs->rc_min_rate=lans[i].bitrate;        // CBR：下限 = 平均
+    vcodecs->rc_buffer_size=lans[i].bitrate*2;   // 桶 ≈ 2×码率（直播经验值）
     vcodecs->time_base={1,1000};
     vcodecs->framerate={10,1};
     vcodecs->max_b_frames=0;
