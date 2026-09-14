@@ -26,14 +26,7 @@ void Avdeio::run()
         }
         while(!isInterruptionRequested()){
             int ret=av_read_frame(outCtx.get(),pkt.get());
-            qint64 readNow=nowMs();
-            m_lastReadMs=readNow;
-            if(ret>=0){
-                int gap = m_lastPktMs ? int(readNow - m_lastPktMs) : 0;
-                m_lastPktMs = readNow;
-                if(gap > m_maxGapMs.load()) m_maxGapMs.store(gap);
-                ++m_readCount;
-            }
+            m_lastReadMs=nowMs();
             if(ret<0)
             {
                 char errbuf[AV_ERROR_MAX_STRING_SIZE] = {0};
@@ -234,7 +227,6 @@ void Avdeio::cleanup()
     newWin=false;
     swsnew=false;
     swrnew=false;
-    m_lastPktMs=0;      // 时间轴 t 重启了，断供间隔必须重新起算
     t.restart();
 }
 

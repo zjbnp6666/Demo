@@ -15,7 +15,6 @@ extern "C"{
 #include"tqueue.h"
 #include"logger.h"
 #include<QElapsedTimer>
-#include<atomic>
 class Avdeio : public QThread
 {
     Q_OBJECT
@@ -25,10 +24,6 @@ public:
     void run();
     FrameData popFrame();
     FrameQueue *m_Queue = nullptr;
-
-    // 诊断计数器：取走并清零
-    int takeReadCount(){ return m_readCount.exchange(0); }
-    int takeMaxGapMs(){ return m_maxGapMs.exchange(0); }
 private:
     //转化器的创建
     static void freeFormatCtx(SwsContext *sws){
@@ -98,11 +93,6 @@ private:
 
     QElapsedTimer t;
     std::atomic<qint64> m_lastReadMs{0};
-
-    // 诊断计数器
-    std::atomic<int> m_readCount{0};     // 读到的包数
-    std::atomic<int> m_maxGapMs{0};      // 相邻两次成功读包之间的最大间隔(ms)
-    qint64 m_lastPktMs = 0;              // 上一次成功读包的时刻(仅读线程用)
 
     static int interruptCb(void *opaque);
     qint64 nowMs();

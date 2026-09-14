@@ -66,11 +66,6 @@ private:
     bool images=false;//是否缓存
     FrameData q=FrameData();
 
-    //诊断计数（每秒打印一次后清零）
-    std::unique_ptr<QTimer> statTime;
-    int m_shown=0;      // 实际上屏帧数
-    int m_dropLate=0;   // 因"晚到 >100ms"被丢掉的帧数
-
     bool pause=false;//暂停
 
     long long audioClock=0;//音频主时钟
