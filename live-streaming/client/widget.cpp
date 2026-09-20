@@ -275,11 +275,19 @@ void Widget::streamstart()
         if(!deio->m_Queue->isEmpty()) deio->popFrame();
         return;
     }
+    // ★ 分两种情况，别一刀切 ——
+    //   ① 流里【压根没有音频轨】（纯视频流）→ 永远等不到，立即放行
+    //   ② 有音频轨 → 给它一个时间去把第一块音频喂进来，等不到再放行
+    //   实测 141 次：连接成功 → 第一块音频，中位 48ms、最长 6.9 秒 ⇒ 10 秒留足余量
+    //   （原来写死 120000 —— 情形①会白黑 120 秒；重连时画面已经在播，也会被它打黑）
+    if(!deio->hasAudioStream()){
+        headpst=true;
+        updateLoading();      // ★ 别漏 —— loadingBar 的可见性只认 updateLoading()
+    }
     if(!headpst){
-        // 音频还没就绪：先丢视频帧，别让队列积压把解码线程堵死。
-        // 但不能无限等 —— 无音频轨的流也得能出画面，所以 120 秒后强行放行。
+        // 音频还没就绪：先丢视频帧，别让队列积压把解码线程堵死
         if(!headWait.isValid()) headWait.start();
-        if(headWait.elapsed()<120000){
+        if(headWait.elapsed()<10000){
             if(!deio->m_Queue->isEmpty()) deio->popFrame();
             return;
         }

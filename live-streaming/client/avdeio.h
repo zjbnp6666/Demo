@@ -24,6 +24,8 @@ public:
     void run();
     FrameData popFrame();
     FrameQueue *m_Queue = nullptr;
+    // 这条流里有没有音频轨 —— init() 里按 codec_type 找出来的，开流时就知道
+    bool hasAudioStream();
 private:
     //转化器的创建
     static void freeFormatCtx(SwsContext *sws){

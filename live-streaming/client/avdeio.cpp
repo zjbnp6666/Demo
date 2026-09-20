@@ -128,6 +128,15 @@ FrameData Avdeio::popFrame()
     return m_Queue->pop();
 }
 
+// 这条流里有没有音频轨 —— 用来决定"要不要等第一块音频才放行画面"。
+// ⚠️ AUDEOIDX 是【流的 index】，从 0 开始 —— 音频完全可能是第 0 条流
+//    （实测：rtmp 拉一条 ffmpeg 推的流，ffprobe 出来就是 `0,audio / 1,video`）
+//    ⇒ 必须写 >= 0，写成 > 0 会把 index=0 的音频误判成"没有音频轨"。
+bool Avdeio::hasAudioStream()
+{
+    return AUDEOIDX >= 0;
+}
+
 bool Avdeio::init()
 {
     m_lastReadMs = nowMs();   // 每次连接前刷新，避免 callback 因"上次连接留下的过期值"锁死 open

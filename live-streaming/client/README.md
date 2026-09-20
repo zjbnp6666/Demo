@@ -10,6 +10,7 @@
 - 拉流 → 解封装 → 解码 → 渲染（**HTTP-FLV / RTMP 都支持**，改 URL 即可，但见下方注意事项）
 - 音视频同步：音频主时钟（播放头），视频落后丢帧 / 超前缓存 / **坏时钟护栏直通**
 - 静默断网检测：`interrupt_callback` 3 秒看门狗 + **首包哨兵**（防"刚连上就被自己踢"）
+- **音频设备热插拔自适应**（拔耳机自动重锚时钟 + 重建声卡，不用重启）
 - 清晰度切换（高清 / 标清 / 流畅三档）
 - 音量调节 + 静音、暂停 / 全屏
 - 画面缩放三策略（等比 / 拉伸 / 裁剪）
@@ -105,7 +106,36 @@ cmake --build build -j8
 主线程一个 30ms 定时器取视频帧上屏、一个 10ms 定时器取音频喂声卡。
 改解码器/参数只动 `Avdeio` 一处，队列用 `QMutex + QWaitCondition` 保线程安全。
 
-### 5. 策略模式做画面缩放 —— 开闭原则
+### 5. 音频设备热插拔的「四步自救」
+
+**拔耳机 / 切设备时的连锁反应**：声卡没了 → 旧 `QAudioSink` **不会自己迁到新设备**
+（sink 在创建那一刻就绑定了设备）→ `processedUSecs()` 返 0
+→ `audioClock = clockBasePts + (0 − procBace)` **整段掉下去，而且永不自愈**。
+
+一个入口 `relatchAudioClock()` 把四件事收口：
+
+```cpp
+void Widget::relatchAudioClock()
+{
+    deio->m_Queue->clear1();                          // ① 清掉上一段流的音频块，别让旧 PTS 混进新流
+    au->strat();                                      // ② 重建 sink（新 sink 绑定"当下"的默认设备）
+    clockBasePts = 0; procBace = 0; audioClock = 0;   // ③ 三个时钟【一起】归零重锚
+    headpst = false; headWait.invalidate();           // ④ 复位"音频就绪"标志
+    updateLoading();
+}
+```
+
+- **谁来触发**：`QMediaDevices::audioOutputsChanged` → `relatchAudioClock()`；**断流重连走同一个入口**。
+- **三个时钟必须一起归零** —— 只归零其中一个，时钟会卡在错的位置，越走越偏。
+- **重建 sink 时要"先松手再销毁"**（见踩坑里的 use-after-free）。
+- **兜底**：重锚会把 `headpst` 打成 `false`，而此时音频还没喂进来 → 每一拍都在丢视频帧 → 黑屏。
+  加一个 `headWait` 超时**强行放行**，保证**没有音频轨的流也能出画面**。
+
+> ⚠️ **兜底是有代价的，要知道**：放行之后音频时钟恒为 0，视频帧 pts 恒 `> 0 + 3ms`
+> → **每一帧都进"太早"分支**；而缓存分支**不 pop 新帧** → **每 2 个 tick 才推进 1 帧**。
+> **⇒ 上屏帧率被钉死在 `1/(2×tick)`** —— 一条"帧率偷偷取决于某个定时器间隔"的隐藏耦合。
+
+### 6. 策略模式做画面缩放 —— 开闭原则
 
 等比 / 拉伸 / 裁剪三种缩放抽象成 `Renderstrategy` 基类 + 三个子类，`VideoWidget` 只认基类。
 加新缩放方式不改旧代码。
