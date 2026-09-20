@@ -32,17 +32,19 @@ public:
     bool isEmpty1();
     void setDone1();        // EOF 标记，唤醒 pop()
 
+    int depth1();
+    int depth();
 private:
     QMutex mutex;
     QWaitCondition notEmpty;
-    QList<FrameData> queue;
+    QList<FrameData> queue;//视频
     static const int MAX_SIZE = 5;
     bool m_done = false;
 
     QMutex amutex;
     QWaitCondition anotEmpty;
     QWaitCondition anotFull;
-    QList<AudioData> queue1;
+    QList<AudioData> queue1;//音频
     bool m_adone = false;
 };
 

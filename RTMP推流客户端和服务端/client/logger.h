@@ -7,6 +7,7 @@
 #include<QDateTime>
 #include<QDebug>
 #include<QMutex>
+
 class Logger
 {
 public:

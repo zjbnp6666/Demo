@@ -1,4 +1,5 @@
 #include "audiosinke.h"
+#include <qdebug.h>
 
 AudioSinke::AudioSinke(QObject *parent)
     : QObject{parent}
@@ -13,13 +14,15 @@ void AudioSinke::strat()
     if(sink)
     {
         sink->stop();
+        io=nullptr;
         sink.reset();
-        io.reset();
+
     }
     sink=std::make_unique<QAudioSink>(fmt,this);
     sink->setBufferSize(44100*2*2/5);
-    QIODevice *ii=sink->start();
-    io.reset(ii);
+    io=sink->start();
+    //qDebug() << "[strat] io=" << (io!=nullptr)
+      //       << " byteFree=" << (sink ? sink->bytesFree() : -1);
 }
 
 void AudioSinke::stop()
@@ -29,18 +32,26 @@ void AudioSinke::stop()
         sink->stop();
         sink.reset();
     }
-    io.reset();
+    io=nullptr;
 }
 
 void AudioSinke::addPcm(const char* pcm, int len)
 {
-    if(io)
+    if(io){
+        //addPcmsum+=len;
+        //qDebug()<<"PCM总数:"<<addPcmsum;
         io->write(pcm,len);
+    }
 }
 
 qint64 AudioSinke::processedUSecs() const
 {
     return sink? sink->processedUSecs():0;
+}
+
+int AudioSinke::pendingBytes() const
+{
+    return sink?sink->bufferSize()-sink->bytesFree():0;
 }
 
 void AudioSinke::setVolume(qreal vol)
@@ -51,4 +62,9 @@ void AudioSinke::setVolume(qreal vol)
 int AudioSinke::byteFree()const
 {
     return sink?sink->bytesFree():0;
+}
+
+qint64 AudioSinke::bytesPerSec()
+{
+    return fmt.sampleRate()*fmt.channelCount()*(fmt.sampleFormat()==QAudioFormat::Int16?2:4);
 }

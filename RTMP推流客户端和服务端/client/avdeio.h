@@ -89,10 +89,14 @@ private:
 
     void  cleanup();// 释放解码器/转换器/上下文
 
-    const QString DEFAULT_URL = "rtmp://127.0.0.1:1935/live/stream_720p";
+    // HTTP-FLV（不是 rtmp）：注意 `http://` + 端口 8000 + 流名带 .flv
+    // 换 HTTP-FLV 的原因：实测 rtmp 下静默断网检测不生效（09-11 挂 12 秒不断），http-flv 下 ~4 秒断
+    // ⚠️ 2026-09-19 更正：原先写"rtmp 下回调不被调用"是错的，机制仍未查清（见笔记第五节）
+    const QString DEFAULT_URL = "http://127.0.0.1:8000/live/stream_720p.flv";
 
     QElapsedTimer t;
-    std::atomic<qint64> m_lastReadMs{0};
+    std::atomic<qint64> m_lastReadMs{0};//看门狗成功读到包的时刻
+    bool m_gotFirstPacket=false;//看门狗哨兵 避免成功脸上却还是被踢掉
 
     static int interruptCb(void *opaque);
     qint64 nowMs();

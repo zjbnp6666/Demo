@@ -26,7 +26,7 @@ void Avdeio::run()
         }
         while(!isInterruptionRequested()){
             int ret=av_read_frame(outCtx.get(),pkt.get());
-            m_lastReadMs=nowMs();
+            m_lastReadMs=nowMs();     // 看门狗：刷新"最后一次成功读到包的时刻"
             if(ret<0)
             {
                 char errbuf[AV_ERROR_MAX_STRING_SIZE] = {0};
@@ -37,6 +37,7 @@ void Avdeio::run()
                 cleanup();
                 break;
             }
+            m_gotFirstPacket=true;
             if(pkt->stream_index==AVDEOIDX)
             {
                 int ret=avcodec_send_packet(avcodec.get(),pkt.get());
@@ -130,6 +131,7 @@ FrameData Avdeio::popFrame()
 bool Avdeio::init()
 {
     m_lastReadMs = nowMs();   // 每次连接前刷新，避免 callback 因"上次连接留下的过期值"锁死 open
+    m_gotFirstPacket=false;
     if(!newWin){
         AVFormatContext *ctx = avformat_alloc_context();
         ctx->interrupt_callback={interruptCb,this};
@@ -203,6 +205,15 @@ bool Avdeio::init()
                 m_videoTimeBase=stream->time_base;
             }
         }
+        // 探针：把流的构成打出来（HTTP-FLV 会多一条 data 流，看 index 对不对）
+        {
+            QString s = QString("【流】nb_streams=%1  AVIDX=%2 UIDX=%3  各流:")
+                        .arg(outCtx->nb_streams).arg(AVDEOIDX).arg(AUDEOIDX);
+            for(int i=0;i<outCtx->nb_streams;i++)
+                s += QString(" [%1:%2]").arg(i).arg(outCtx->streams[i]->codecpar->codec_type);
+            Logger::instance().info(s);
+        }
+
         AVPacket *pk1=av_packet_alloc();
         pkt.reset(pk1);
         AVFrame *fr1=av_frame_alloc();
@@ -234,12 +245,23 @@ int Avdeio::interruptCb(void *opaque)
 {
 
     auto *self=static_cast<Avdeio*>(opaque);
+
+    // ① 用户主动要求退出（析构里的 requestInterruption）—— 永远放第一条
     if(self->isInterruptionRequested()) return 1;
+
+    // ② 哨兵：还没读到第一个包 → 不管。刚连上、流还没推上来，等多久都算正常
+    if(!self->m_gotFirstPacket) return 0;
+
+    // ③ 3 秒看门狗：已经在播了，却超过 3 秒没读到包 → 报中断
     qint64 now=self->nowMs();
-    if(self->m_lastReadMs&&now -self->m_lastReadMs>3000) return 1;
+    if(self->m_lastReadMs && now - self->m_lastReadMs > 3000) return 1;
     return 0;
 
 }
+// ⚠️ 上面的看门狗在 HTTP-FLV 下有效（实测挂起服务器 ~4 秒就断），
+//    但【在 rtmp 下不生效】—— 实测挂起服务器 20 秒，本回调【一次都没被调用】
+//    （主线程逐秒采样：距上次回调 和 距上次读 完全相等，一路涨到 29 秒）。
+//    原因未查清；源码上这条链每环都通，但实测就是不生效。详见 README「踩坑记录」。
 
 qint64 Avdeio::nowMs()
 {

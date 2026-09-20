@@ -103,3 +103,14 @@ void FrameQueue::setDone1()
     m_adone = true;
     anotEmpty.wakeAll();              // 唤醒 pop()，让其返回空帧
 }
+
+int FrameQueue::depth1()
+{
+    QMutexLocker l(&amutex);
+    return queue1.size();
+}
+
+int FrameQueue::depth()
+{
+    QMutexLocker l(&mutex);  return queue.size();
+}

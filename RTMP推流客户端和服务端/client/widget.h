@@ -27,6 +27,7 @@
 #include<QSlider>
 #include<QDebug>
 #include<QElapsedTimer>
+#include <QMediaDevices>
 QT_BEGIN_NAMESPACE
 namespace Ui {
 class Widget;
@@ -58,6 +59,7 @@ private:
     void setRenderMode(int id);//切换模式槽函数
     void switchStream(const QString &newUrl);//切换清晰度重连
     void connectDeio();//重建 deio 后重连信号
+    void relatchAudioClock();//重新锁存时钟
 
     std::unique_ptr<AudioSinke> au;
     std::unique_ptr<QTimer> utime;
@@ -72,7 +74,7 @@ private:
     qint64 procBace=0; //第一帧音频时 声卡已播放基准
     long long clockBasePts=0;//第一帧的音频pts
 
-    QString url="rtmp://127.0.0.1:1935/live/stream_720p";//URL连接地址(默认高清)
+    QString url="http://127.0.0.1:8000/live/stream_720p.flv";//URL连接地址(默认高清,HTTP-FLV)
 
     //暂停和等待动画
     std::unique_ptr<QProgressBar> loadingBar;
@@ -96,5 +98,9 @@ private:
 
     QElapsedTimer t;
     bool tstart=false;
+
+    QElapsedTimer headWait;//音频就绪时钟 等久了不要了
+
+    qint64 bytesOerSec;//每秒字节数=return byresOerSec
 };
 #endif // WIDGET_H

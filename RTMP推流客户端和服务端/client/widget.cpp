@@ -19,6 +19,15 @@ Widget::Widget(QWidget *parent)
     deio=std::make_unique<Avdeio>(url,this);
     au = std::make_unique<AudioSinke>(this);
     au->strat();   // 不调这行，sink 也是 nullptr
+    // ── 临时验证（2026-09-18，验完，注释备查）──────────────────────
+    // 结论：写完 100ms 后立刻读 = 0，200ms 后 = 100000
+    // ⇒ processedUSecs 数的是「声卡取走」的，不是「写进去」的
+    //static const QByteArray zeros(44100*2*2/10, '\0');   // 100ms 静音 = 17,640 字节
+    //au->addPcm(zeros.constData(), zeros.size());
+    //qDebug() << "【验证】写完 100ms 后立刻:" << au->processedUSecs();
+    //QThread::msleep(200);
+    //qDebug() << "【验证】200ms 后:" << au->processedUSecs();
+    bytesOerSec=au->bytesPerSec();
 
     connectDeio();
     //视频播放
@@ -34,24 +43,32 @@ Widget::Widget(QWidget *parent)
         }
         while(!deio->m_Queue->isEmpty1()&&au->byteFree()>4096){
             AudioData data=deio->m_Queue->pop1();
+            // ── 临时探针（2026-09-18，验完，注释备查）─────────────
+            //Logger::instance().debug(QString("音频帧pts:%1").arg(data.pts_us));
+            //Logger::instance().debug(QString("本块audioClock:%1 pendingBytes:%2 视频对列深:%3 音频对列深:%4")
+            //.arg(audioClock).arg(au->pendingBytes()).arg(deio->m_Queue->depth()).arg(deio->m_Queue->depth1()));
             au->addPcm(data.data.constData(),data.data.size());
 
+            const qint64 playedUs=au->processedUSecs();
             if(clockBasePts==0)
             {
+                Logger::instance().warn(QString("★【锚】打新锚点: 本块pts=%1  playedUs=%2")
+                    .arg(data.pts_us).arg(playedUs));
                 clockBasePts=data.pts_us;
-                procBace=au->processedUSecs();
+                procBace=playedUs;
             }
             if(!headpst)
             {
                 headpst=true;
                 updateLoading();
             }
-        }
-        if(clockBasePts!=0){
-            audioClock=clockBasePts+(au->processedUSecs()-procBace);
+            audioClock=clockBasePts+(playedUs-procBace);
         }
     });
     deio->start();
+    auto* devs = new QMediaDevices(this);//必须自己 new
+    connect(devs, &QMediaDevices::audioOutputsChanged,
+            this, [this]{ relatchAudioClock(); });
     updateLoading();
     t.start();
 }
@@ -140,9 +157,9 @@ void Widget::setupUI()
 
     connect(rdoQuality.get(), &QButtonGroup::idClicked, this, [this](int id){
         const char* streams[3] = {
-            "rtmp://127.0.0.1:1935/live/stream_720p",
-            "rtmp://127.0.0.1:1935/live/stream_360p",
-            "rtmp://127.0.0.1:1935/live/stream_180p",
+            "http://127.0.0.1:8000/live/stream_720p.flv",
+            "http://127.0.0.1:8000/live/stream_360p.flv",
+            "http://127.0.0.1:8000/live/stream_180p.flv",
         };
         switchStream(QString::fromLatin1(streams[id]));
     });
@@ -158,7 +175,7 @@ void Widget::setupUI()
 
     //Dialog 渲染
     Urlname = std::make_unique<QLineEdit>();
-    Urlname->setPlaceholderText("rtmp://127.0.0.1:1935/live/stream");
+    Urlname->setPlaceholderText("http://127.0.0.1:8000/live/stream_720p.flv");
     btnconnect = std::make_unique<QPushButton>("连接");
 
     auto *topBar = new QHBoxLayout;
@@ -258,12 +275,16 @@ void Widget::streamstart()
         if(!deio->m_Queue->isEmpty()) deio->popFrame();
         return;
     }
-    // 音频还没就绪：丢帧防积压，不显示（以后这里放加载动画）
-    if(!headpst) {
-        if(!deio->m_Queue->isEmpty()) {
-            deio->popFrame();   // 消费掉，防止视频队列满阻塞解码线程
+    if(!headpst){
+        // 音频还没就绪：先丢视频帧，别让队列积压把解码线程堵死。
+        // 但不能无限等 —— 无音频轨的流也得能出画面，所以 120 秒后强行放行。
+        if(!headWait.isValid()) headWait.start();
+        if(headWait.elapsed()<120000){
+            if(!deio->m_Queue->isEmpty()) deio->popFrame();
+            return;
         }
-        return;
+        headpst=true;
+        updateLoading();
     }
     if(images)//是否有缓存帧判断
     {
@@ -280,14 +301,23 @@ void Widget::streamstart()
     }
     if(deio->m_Queue->isEmpty()) return;
     FrameData data=deio->popFrame();
-    if(data.pts_us<audioClock-100000) return;
-    if(data.pts_us>audioClock+3000)
+
+    // ★ 护栏（60 秒）：视频 pts 和音频时钟差得离谱 → 判定本段流时钟坏了 → 【直通上屏，不做同步】。
+    //   没有它的话，坏掉的时钟（比如被 +2³² 顶成 43 亿）会让每一帧都落到下面那行"过期丢"里
+    //   → 一帧不剩全丢 → 只有声音、画面黑。
+    //   ⚠️ 所以"43 亿 → 黑屏"这句只在【没有护栏时】成立，有护栏时它是直通的。
+    if(audioClock==0||qAbs(data.pts_us-audioClock)>60000000){
+        start(data.image);
+        return;
+    }
+    if(data.pts_us<audioClock-100000) return;   // 视频落后音频 100ms 以上 → 过期丢
+    if(data.pts_us>audioClock+3000)             // 视频超前 → 存起来，等下一拍再看
     {
         q=data;
         images=true;
         return;
     }
-    start(data.image);
+    start(data.image);                          // 临界 → 直接上屏
 }
 
 
@@ -332,12 +362,30 @@ void Widget::setRenderMode(int id)//切换画面格式
 void Widget::connectDeio()//画面卡住 混在连接失败
 {
     connect(deio.get(),&Avdeio::connectFail,this,[this](){
-        QMessageBox::warning(this,"提示","连接失败 正在重连");
+        Logger::instance().warn("连接失败 正在重连");
     });
     connect(deio.get(), &Avdeio::reconnecting, this, [this]{
-        headpst = false;
-        updateLoading();
+        relatchAudioClock();
     });
+}
+
+void Widget::relatchAudioClock()
+{
+    Logger::instance().warn("★ relatch被套用了（音频设备变化/重连触发）");
+    Logger::instance().warn(QString("★【锚】relatch 前: audioClock=%1  clockBasePts=%2  procBace=%3")
+        .arg(audioClock).arg(clockBasePts).arg(procBace));
+    if(deio && deio->m_Queue) deio->m_Queue->clear1();// 清掉上一段流的音频块
+    Logger::instance().warn(QString("★ [relatch] 默认输出=%1")
+        .arg(QMediaDevices::defaultAudioOutput().description()));
+    if(!QMediaDevices::defaultAudioOutput().isNull())   // ←只有"当前有可用的输出设备"才重建
+        au->strat();
+
+    clockBasePts=0;
+    procBace=0;
+    audioClock=0;
+    headpst=false;
+    headWait.invalidate();
+    updateLoading();
 }
 
 void Widget::switchStream(const QString &newUrl)//切换流
@@ -350,10 +398,7 @@ void Widget::switchStream(const QString &newUrl)//切换流
     deio.reset();
     deio = std::make_unique<Avdeio>(url, this);
     connectDeio();
-    headpst = false;
-    audioClock = 0;
-    clockBasePts = 0;
-    procBace = 0;
+    relatchAudioClock();
     images = false;
     q = FrameData();
     deio->start();
