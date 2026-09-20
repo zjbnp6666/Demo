@@ -8,12 +8,14 @@ AudioFormat::AudioFormat(qint64 sample, int ch_layout, QObject *parent)
     fmt.setChannelCount(ch_layout);
     fmt.setSampleFormat(QAudioFormat::Int16);
 
-    mic=QMediaDevices::defaultAudioInput();
+    mic=QMediaDevices::defaultAudioInput();//使用默认设备 之前只在
+    //构造函数调用一次 导致设备更换 QAudioSource收不到信息
 
 }
 
 void AudioFormat::start()
 {
+    mic=QMediaDevices::defaultAudioInput();//重新更新默认设备 选中为当前设备 防止使用之前设备
     if(src){
         src.reset();
     }

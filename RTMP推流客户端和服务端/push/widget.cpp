@@ -20,11 +20,24 @@ Widget::Widget(QWidget *parent)
     connect(worker,&QThread::finished,worker,&QObject::deleteLater);
     worker->start();
     t.start();
+    auto* devs = new QMediaDevices(this);
+    connect(devs, &QMediaDevices::audioInputsChanged, this, [this]{ relatchMic(); });//更换设备自动调用
 }
 void Widget::onAuReadAll()
 {
     QByteArray b=au->io->readAll();
     worker->appedAudio(b);
+}
+
+void Widget::relatchMic()
+{
+    au->start();
+    if(au->io)
+        connect(au->io,&QIODevice::readyRead,this,&Widget::onAuReadAll);
+    else{
+        Logger::instance().warn("麦克风重开失败");
+    }
+
 }
 
 

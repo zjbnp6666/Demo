@@ -49,6 +49,9 @@ private:
     //麦克风缓冲区
     void onAuReadAll();
 
+    //音频设配切换设置自救
+    void relatchMic();
+
     AV *worker=nullptr;
 
     QElapsedTimer t;
