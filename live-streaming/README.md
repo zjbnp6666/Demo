@@ -1,6 +1,10 @@
-# RTMP 推流客户端和服务端
+# 直播推拉流系统
 
 基于 Qt + FFmpeg 的多码率直播系统，一端推、一端拉。
+
+> **目录名用 ASCII（`live-streaming`）是故意的** —— 原来的 `RTMP推流客户端和服务端` 带**中文和空格**，
+> `mingw32-make` 直接报 `No rule to make target`，**别人 clone 下来根本编不了**（实测）。
+> 顺带名字也改成中性的了 —— 推流端走 RTMP、拉流端走 HTTP-FLV，叫什么"RTMP…"已经不准。
 
 ## 组成
 
